@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import Tile, { PLACEHOLDER_IMG } from "./Tile";
+import ProductCta from "./ProductCta";
 import type { ModelCard } from "./api";
 
 function price(p: number | null) {
@@ -52,6 +53,8 @@ export default function ProductCard({
           ))}
         </div>
       )}
+
+      <ProductCta priceType={v.price_type} />
     </article>
   );
 }

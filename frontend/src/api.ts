@@ -1,5 +1,7 @@
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+export type PriceType = "OnlineFrom" | "PVPR";
+
 export interface ProductSummary {
   sku: string;
   title: string | null;
@@ -7,6 +9,7 @@ export interface ProductSummary {
   collection: string | null;
   finish: string | null;
   price_rrp: number | null;
+  price_type: PriceType;
   is_spare_part: boolean;
   image: string | null;
   dims: string | null;
@@ -18,6 +21,7 @@ export interface Variant {
   finish: string | null;
   image: string | null;
   price_rrp: number | null;
+  price_type: PriceType;
   dims: string | null;
 }
 export interface ModelCard {

@@ -4,6 +4,7 @@ import Facets from "./Facets";
 import Chat, { type ChatMsg } from "./Chat";
 import Tile, { PLACEHOLDER_IMG } from "./Tile";
 import ProductCard from "./ProductCard";
+import ProductCta from "./ProductCta";
 import {
   search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED,
   type ProductSummary, type ProductDetail, type Suggestion, type Filter,
@@ -421,6 +422,7 @@ export default function App() {
                     ))}
                   </div>
                 )}
+                <ProductCta priceType={detail.price_type} />
               </div>
             </div>
 

@@ -81,11 +81,19 @@ def search_blob(p):
 
 SEARCH_INDEX = {p["sku"]: search_blob(p) for p in PRODUCTS}
 
+def price_type_of(p):
+    pt = p.get("price_type") or p.get("PriceType")
+    if pt in ("OnlineFrom", "PVPR"):
+        return pt
+    return "OnlineFrom" if p.get("ecommerce") else "PVPR"
+
+
 def summary(p):
     return {
         "sku": p["sku"], "title": p.get("title"), "category": p.get("category"),
         "collection": p.get("collection"), "finish": p.get("finish"),
-        "price_rrp": p.get("price_rrp"), "is_spare_part": p.get("is_spare_part"),
+        "price_rrp": p.get("price_rrp"), "price_type": price_type_of(p),
+        "is_spare_part": p.get("is_spare_part"),
         "image": IMAGES.get(p["sku"]), "dims": dims_str(p),
     }
 
@@ -291,7 +299,7 @@ def variant_summary(p):
     """Resumen ligero de una variante (acabado) para thumbnails y ficha."""
     return {"sku": p["sku"], "finish": p.get("finish"),
             "image": IMAGES.get(p["sku"]), "price_rrp": p.get("price_rrp"),
-            "dims": dims_str(p)}
+            "price_type": price_type_of(p), "dims": dims_str(p)}
 
 
 def _agg_models(products, field):
