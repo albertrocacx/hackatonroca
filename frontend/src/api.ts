@@ -123,3 +123,47 @@ export async function getProduct(sku: string): Promise<ProductDetail> {
   if (!r.ok) throw new Error("Producto no encontrado");
   return r.json();
 }
+
+// ---- Chat IA (opcional) ----
+export async function getHealth(): Promise<{ chat_ready: boolean }> {
+  const r = await fetch(`${API}/health`);
+  if (!r.ok) throw new Error("health");
+  return r.json();
+}
+
+export interface ChatView { query?: string; visible?: string[]; }
+export interface ChatRequest { text: string; session_id?: string | null; view?: ChatView; }
+
+export type ChatEvent =
+  | { type: "text"; text: string }
+  | { type: "tool"; name: string }
+  | { type: "tool_error"; name: string; error: string }
+  | { type: "grid"; query: string | null; data: SearchResponse }
+  | { type: "done"; session_id?: string }
+  | { type: "error"; message: string };
+
+// POST en streaming: el backend responde NDJSON (un evento JSON por línea).
+export async function* streamChat(req: ChatRequest): AsyncGenerator<ChatEvent> {
+  const res = await fetch(`${API}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok || !res.body) throw new Error("Error en el chat");
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });    // un chunk puede cortar una línea a la mitad
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";                        // guarda el fragmento final hasta el próximo read
+    for (const line of lines) {
+      const s = line.trim();
+      if (s) yield JSON.parse(s) as ChatEvent;
+    }
+  }
+  const tail = buf.trim();
+  if (tail) yield JSON.parse(tail) as ChatEvent;
+}

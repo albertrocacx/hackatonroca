@@ -11,6 +11,13 @@ from typing import Optional
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+
+# chat IA opcional: si el SDK no está instalado, la app sigue funcionando (solo búsqueda)
+try:
+    import chat
+except Exception:  # noqa: BLE001
+    chat = None
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
@@ -96,7 +103,8 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"status": "ok", "products": len(PRODUCTS),
-            "relations_models": len(RELATIONS)}
+            "relations_models": len(RELATIONS),
+            "chat_ready": bool(chat and chat.OAUTH_TOKEN)}
 
 # ---------------------------------------------------------------- query understanding
 def _resolve_price_band(band, category):
@@ -342,6 +350,27 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
     return {"query": q, "total": len(matched),
             "results": [summary(p) for _, p in matched[:limit]],
             "facets": facets}
+
+
+# ---- chat IA (opcional): usa la MISMA search() de arriba como fuente de verdad ----
+if chat is not None:
+    chat.configure(search)
+
+
+@app.post("/api/chat")
+async def api_chat(body: dict):
+    """Stream NDJSON de eventos del agente (text/tool/grid/done/error). Ver chat.stream_turn."""
+    async def gen():
+        if chat is None:
+            yield json.dumps({"type": "error",
+                              "message": "Chat IA no disponible: falta claude-agent-sdk en el backend."}) + "\n"
+            return
+        async for ev in chat.stream_turn(body.get("text", ""),
+                                         session_id=body.get("session_id"),
+                                         view=body.get("view")):
+            yield json.dumps(ev, ensure_ascii=False) + "\n"
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
 
 def resolve(code):
     """ code (modelo, con posibles '..') -> productos reales del catalogo """

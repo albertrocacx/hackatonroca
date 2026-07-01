@@ -1,4 +1,5 @@
-fastapi==0.115.5
+fastapi==0.138.2          # bumped from 0.115.5: claude-agent-sdk pulls starlette 1.x (via mcp)
 uvicorn[standard]==0.32.1
 numpy>=2.0
 model2vec>=0.3
+claude-agent-sdk>=0.2.110  # opcional: chat IA sobre resultados (necesita CLAUDE_CODE_OAUTH_TOKEN)

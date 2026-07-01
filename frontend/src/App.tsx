@@ -1,11 +1,16 @@
 import { useState, useEffect, useRef, type FormEvent } from "react";
 import "./styles.css";
 import Facets from "./Facets";
+import Chat, { type ChatMsg } from "./Chat";
 import {
-  search, suggest, getProduct, EMPTY_SELECTED,
+  search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED,
   type ProductSummary, type ProductDetail, type Suggestion, type Filter,
   type Selected, type Facets as FacetsData,
 } from "./api";
+
+const CHAT_INTRO =
+  "Hola. Dime qué buscas —un lavabo, un plato de ducha, una grifería— y te muestro opciones en la parrilla. Puedo filtrar por precio o acabado y afinar la búsqueda.";
+const TOOL_LABEL: Record<string, string> = { search_catalog: "Buscando en el catálogo" };
 
 const TYPE_LABEL: Record<string, string> = {
   category: "Categoría",
@@ -60,6 +65,15 @@ function SearchIcon() {
   );
 }
 
+function SparkIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 2l1.9 5.1L19 9l-5.1 1.9L12 16l-1.9-5.1L5 9l5.1-1.9L12 2z" />
+      <path d="M19 14l.9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9L19 14z" opacity=".7" />
+    </svg>
+  );
+}
+
 export default function App() {
   const [q, setQ] = useState("");
   const [submitted, setSubmitted] = useState("");
@@ -69,6 +83,14 @@ export default function App() {
   const [detail, setDetail] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // --- chat IA (opcional) ---
+  const [aiOpen, setAiOpen] = useState(false);
+  const [chatReady, setChatReady] = useState(false);
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [chatStatus, setChatStatus] = useState<string | null>(null);
+  const [chatBusy, setChatBusy] = useState(false);
+  const sessionId = useRef<string | null>(null);
 
   // --- estado de la búsqueda actual (define el SCOPE) + selección de facetas ---
   const [baseText, setBaseText] = useState("");
@@ -179,8 +201,82 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    getHealth().then((h) => setChatReady(!!h.chat_ready)).catch(() => {});
+  }, []);
+
+  // Envía un turno al agente y consume el stream NDJSON, actualizando chat + parrilla.
+  async function sendChat(text: string) {
+    if (!text.trim() || chatBusy) return;
+    setMessages((m) => [...m, { role: "user", text }]);
+    setChatBusy(true);
+    setChatStatus("");
+    let asstOpen = false;   // ¿hay una burbuja del asistente abierta a la que ir añadiendo texto?
+    try {
+      const view = { query: submitted, visible: results.slice(0, 12).map((r) => r.sku) };
+      for await (const ev of streamChat({ text, session_id: sessionId.current, view })) {
+        if (ev.type === "text") {
+          setChatStatus(null);
+          if (!asstOpen) {
+            asstOpen = true;
+            setMessages((m) => [...m, { role: "assistant", text: ev.text }]);
+          } else {
+            setMessages((m) => {
+              const c = m.slice();
+              c[c.length - 1] = { ...c[c.length - 1], text: c[c.length - 1].text + ev.text };
+              return c;
+            });
+          }
+        } else if (ev.type === "tool") {
+          setChatStatus(TOOL_LABEL[ev.name] ?? "");
+        } else if (ev.type === "grid") {
+          asstOpen = false;                       // tras la parrilla, el próximo texto abre burbuja nueva
+          const q2 = ev.query ?? submitted;
+          setResults(ev.data.results);
+          setTotal(ev.data.total);
+          setFacets(ev.data.facets);
+          setSubmitted(q2);
+          // el agente fija el SCOPE de texto; el sidebar de facetas parte de cero sobre él
+          setBaseText(q2); setSubcat(null); setSel(EMPTY_SELECTED);
+          setMessages((m) => [...m, { role: "note", text: "Resultados actualizados ←" }]);
+        } else if (ev.type === "done") {
+          if (ev.session_id) sessionId.current = ev.session_id;
+        } else if (ev.type === "error") {
+          setMessages((m) => [...m, { role: "error", text: ev.message }]);
+        }
+      }
+    } catch (err) {
+      setMessages((m) => [...m, { role: "error", text: `Error de conexión con el chat: ${err}` }]);
+    } finally {
+      setChatBusy(false);
+      setChatStatus(null);
+    }
+  }
+
+  // Botón "Búsqueda IA": abre el panel y siembra la conversación con la consulta actual.
+  function openAI() {
+    setAiOpen(true);
+    const seed = q.trim();
+    if (!chatReady) {
+      if (messages.length === 0) {
+        setMessages([{ role: "error",
+          text: "Chat en modo demo. Para activarlo: ejecuta `claude setup-token`, añade CLAUDE_CODE_OAUTH_TOKEN a backend/.env y reinicia el servidor. La búsqueda ya funciona." }]);
+      }
+      return;
+    }
+    if (seed) sendChat(seed);
+    else if (messages.length === 0) setMessages([{ role: "assistant", text: CHAT_INTRO }]);
+  }
+
+  function newChat() {
+    sessionId.current = null;
+    setMessages(chatReady ? [{ role: "assistant", text: CHAT_INTRO }] : []);
+    setChatStatus(null);
+  }
+
   return (
     <>
+      <div className={`rs-app${aiOpen ? " rs-app--chat" : ""}`}>
       <header className="rs-header">
         <a className="rs-logo" href="#" onClick={(e) => e.preventDefault()} aria-label="Roca">
           <img src="https://www.roca.es/documents/20126/346080475/roca-logo.svg/4dc29d13-1df3-b628-786b-7c63db57cdcd?t=1753429104544" alt="Roca" />
@@ -236,6 +332,10 @@ export default function App() {
             )}
           </div>
         </form>
+        <button type="button" className="rs-ai-btn" onClick={openAI} title="Buscar y conversar con IA">
+          <SparkIcon />
+          <span>Búsqueda IA</span>
+        </button>
       </header>
 
       <div className="rs-layout">
@@ -276,6 +376,18 @@ export default function App() {
           </div>
         </main>
       </div>
+      </div>
+
+      {aiOpen && (
+        <Chat
+          messages={messages}
+          status={chatStatus}
+          busy={chatBusy}
+          onSend={sendChat}
+          onClose={() => setAiOpen(false)}
+          onNew={newChat}
+        />
+      )}
 
       {detail && (
         <div className="rs-overlay" onClick={() => setDetail(null)}>
