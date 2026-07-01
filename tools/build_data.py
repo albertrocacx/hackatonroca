@@ -37,6 +37,12 @@ def title_of(row):
         return CODE_PREFIX.sub("", pd)
     return clean(row.get("SKU"))
 
+def raw_val(v):
+    """Valor serializable a JSON tal cual viene del Excel (str/num/bool/None)."""
+    if isinstance(v, (str, int, float, bool)) or v is None:
+        return v
+    return str(v)
+
 # ---------- PRODUCTOS ----------
 wb = openpyxl.load_workbook(XLSX, read_only=True, data_only=True)
 ws = wb.active
@@ -44,7 +50,10 @@ headers = [c.value for c in ws[1]]
 products = []
 for r in ws.iter_rows(min_row=2, values_only=True):
     row = dict(zip(headers, r))
-    products.append({
+    # 1) TODAS las columnas del Excel, con su nombre original
+    rec = {h: raw_val(row.get(h)) for h in headers}
+    # 2) campos derivados/normalizados que usa el backend (no romper la app)
+    rec.update({
         "sku": clean(row.get("SKU")),
         "model": clean(row.get("Model")),
         "title": title_of(row),
@@ -70,11 +79,13 @@ for r in ws.iter_rows(min_row=2, values_only=True):
             "extended": clean(row.get("Extended Description es_ES")),
         },
     })
+    products.append(rec)
 wb.close()
 
 # ---------- RELACIONES (agrupadas por modelo) ----------
+rels_loaded = os.path.exists(RELS)
 relations = defaultdict(list)
-if os.path.exists(RELS):
+if rels_loaded:
     with open(RELS, encoding="utf-8-sig", newline="") as fh:
         for row in csv.DictReader(fh):
             relations[row["model"]].append({
@@ -84,15 +95,18 @@ if os.path.exists(RELS):
                 "collection": row.get("related_designline"),
                 "category": row.get("related_category"),
             })
-else:
-    print(f"AVISO: no encuentro {RELS} (¿lo tienes abierto en Excel?). relations.json quedara vacio.")
 
 # ---------- Guardar ----------
 with open(os.path.join(OUT_DIR, "products.json"), "w", encoding="utf-8") as f:
     json.dump(products, f, ensure_ascii=False)
-with open(os.path.join(OUT_DIR, "relations.json"), "w", encoding="utf-8") as f:
-    json.dump(relations, f, ensure_ascii=False)
+print(f"products.json : {len(products)} productos, {len(products[0])} campos por producto")
 
-print(f"products.json : {len(products)} productos")
-print(f"relations.json: {sum(len(v) for v in relations.values())} relaciones en {len(relations)} modelos")
+# relations.json solo se reescribe si se pudo leer el CSV (no vaciar lo existente)
+if rels_loaded:
+    with open(os.path.join(OUT_DIR, "relations.json"), "w", encoding="utf-8") as f:
+        json.dump(relations, f, ensure_ascii=False)
+    print(f"relations.json: {sum(len(v) for v in relations.values())} relaciones en {len(relations)} modelos")
+else:
+    print(f"AVISO: no encuentro {RELS} -> NO se toca relations.json (se conserva el existente).")
+
 print(f"Salida -> {os.path.abspath(OUT_DIR)}")
