@@ -55,34 +55,67 @@ export async function suggest(q: string): Promise<SuggestResponse> {
   return r.json();
 }
 
-const CONCEPT_PARAM: Record<ConceptType, string> = {
-  category: "category",
-  subcategory: "subcategory",
-  collection: "collection",
+// ---- Facetas ----
+export interface FacetValue { value: string; count: number; }
+export interface Range { min: number; max: number; }
+export interface Facets {
+  category: FacetValue[];
+  collection: FacetValue[];
+  finish: FacetValue[];
+  price: Range | null;
+  dims: { length: Range | null; width: Range | null; height: Range | null };
+}
+export interface SearchResponse {
+  query: string;
+  total: number;
+  results: ProductSummary[];
+  facets: Facets;
+}
+
+// ---- Selección del sidebar ----
+export interface RangeSel { min: number | null; max: number | null; }
+export interface Selected {
+  categories: string[];
+  collections: string[];
+  finishes: string[];
+  price: RangeSel;
+  length: RangeSel;
+  width: RangeSel;
+  height: RangeSel;
+}
+const EMPTY_RANGE: RangeSel = { min: null, max: null };
+export const EMPTY_SELECTED: Selected = {
+  categories: [], collections: [], finishes: [],
+  price: { ...EMPTY_RANGE }, length: { ...EMPTY_RANGE },
+  width: { ...EMPTY_RANGE }, height: { ...EMPTY_RANGE },
 };
 
-export interface SearchOpts {
-  concept?: Suggestion;   // intención elegida (categoría/subcat/colección)
-  filters?: Filter[];     // filtros auto-detectados
-}
+const RANGE_PARAMS: [keyof Selected, string, string][] = [
+  ["price", "min_price", "max_price"],
+  ["length", "min_length", "max_length"],
+  ["width", "min_width", "max_width"],
+  ["height", "min_height", "max_height"],
+];
 
 export async function search(
   q: string,
-  opts: SearchOpts = {}
-): Promise<{ total: number; results: ProductSummary[] }> {
+  selected: Selected,
+  subcategory?: string | null
+): Promise<SearchResponse> {
   const p = new URLSearchParams();
   if (q) p.set("q", q);
-  if (opts.concept) p.set(CONCEPT_PARAM[opts.concept.type], opts.concept.term);
-  for (const f of opts.filters ?? []) {
-    if (f.type === "finish") (f.values ?? []).forEach((v) => p.append("finish", v));
-    if (f.type === "price") {
-      if (f.min_price != null) p.set("min_price", String(f.min_price));
-      if (f.max_price != null) p.set("max_price", String(f.max_price));
-    }
+  if (subcategory) p.set("subcategory", subcategory);
+  selected.categories.forEach((c) => p.append("category", c));
+  selected.collections.forEach((c) => p.append("collection", c));
+  selected.finishes.forEach((f) => p.append("finish", f));
+  for (const [key, minP, maxP] of RANGE_PARAMS) {
+    const r = selected[key] as RangeSel;
+    if (r.min != null) p.set(minP, String(r.min));
+    if (r.max != null) p.set(maxP, String(r.max));
   }
-  const r = await fetch(`${API}/search?${p.toString()}`);
-  if (!r.ok) throw new Error("Error en la busqueda");
-  return r.json();
+  const res = await fetch(`${API}/search?${p.toString()}`);
+  if (!res.ok) throw new Error("Error en la busqueda");
+  return res.json();
 }
 
 export async function getProduct(sku: string): Promise<ProductDetail> {

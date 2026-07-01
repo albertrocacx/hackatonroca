@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, type FormEvent } from "react";
 import "./styles.css";
+import Facets from "./Facets";
 import {
-  search, suggest, getProduct,
+  search, suggest, getProduct, EMPTY_SELECTED,
   type ProductSummary, type ProductDetail, type Suggestion, type Filter,
+  type Selected, type Facets as FacetsData,
 } from "./api";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -21,6 +23,20 @@ const REL_LABELS: Record<string, string> = {
 function price(p: number | null) {
   if (p == null) return null;
   return p.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Combina la selección base (concepto) con los filtros auto-detectados por el autocompletado
+function withAutoFilters(base: Selected, filters: Filter[]): Selected {
+  const s: Selected = {
+    ...base,
+    finishes: [...base.finishes],
+    price: { ...base.price },
+  };
+  for (const f of filters) {
+    if (f.type === "finish") s.finishes = [...s.finishes, ...(f.values ?? [])];
+    if (f.type === "price") s.price = { min: f.min_price ?? null, max: f.max_price ?? null };
+  }
+  return s;
 }
 
 function Tile({ image, title, label }: { image: string | null; title: string | null; label: string | null }) {
@@ -49,17 +65,24 @@ export default function App() {
   const [submitted, setSubmitted] = useState("");
   const [results, setResults] = useState<ProductSummary[]>([]);
   const [total, setTotal] = useState<number | null>(null);
+  const [facets, setFacets] = useState<FacetsData | null>(null);
   const [detail, setDetail] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // --- estado de la búsqueda actual (define el SCOPE) + selección de facetas ---
+  const [baseText, setBaseText] = useState("");
+  const [subcat, setSubcat] = useState<string | null>(null);
+  const [sel, setSel] = useState<Selected>(EMPTY_SELECTED);
+  const debounce = useRef<number | undefined>(undefined);
 
   // --- autocompletado ---
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [autoFilters, setAutoFilters] = useState<Filter[]>([]);
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(-1);   // fila resaltada por teclado
+  const [active, setActive] = useState(-1);
   const boxRef = useRef<HTMLDivElement>(null);
-  const skipSuggest = useRef(false);          // evita reabrir el desplegable al fijar el texto elegido
+  const skipSuggest = useRef(false);
 
   useEffect(() => {
     const term = q.trim();
@@ -72,7 +95,7 @@ export default function App() {
         setAutoFilters(r.filters);
         setActive(-1);
         setOpen(true);
-      } catch { /* silencioso: el autocompletado es best-effort */ }
+      } catch { /* silencioso */ }
     }, 180);
     return () => clearTimeout(t);
   }, [q]);
@@ -86,7 +109,7 @@ export default function App() {
       e.preventDefault();
       setActive((a) => (a <= 0 ? suggestions.length - 1 : a - 1));
     } else if (e.key === "Enter" && active >= 0) {
-      e.preventDefault();          // evita el submit del formulario: usamos la fila resaltada
+      e.preventDefault();
       pickSuggestion(suggestions[active]);
     } else if (e.key === "Escape") {
       setOpen(false);
@@ -101,12 +124,12 @@ export default function App() {
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  async function runSearch(text: string, concept: Suggestion | undefined, filters: Filter[]) {
+  // Única función que llama al backend. No toca la selección de facetas (sólo la usa).
+  async function runSearch(text: string, sc: string | null, s: Selected) {
     setLoading(true); setError(null); setDetail(null); setOpen(false);
-    const label = [concept?.term ?? text, ...filters.map((f) => f.label)].filter(Boolean).join(" · ");
     try {
-      const r = await search(concept ? "" : text, { concept, filters });
-      setResults(r.results); setTotal(r.total); setSubmitted(label);
+      const r = await search(text, s, sc);
+      setResults(r.results); setTotal(r.total); setFacets(r.facets);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -114,17 +137,36 @@ export default function App() {
     }
   }
 
+  // Nueva búsqueda desde el buscador: fija SCOPE y resetea facetas (semilla = filtros auto)
   function doSearch(e: FormEvent) {
     e.preventDefault();
     if (!q.trim()) return;
-    // Enter sin elegir: busca la frase de intención como texto libre + filtros
-    runSearch(q, undefined, autoFilters);
+    const s = withAutoFilters(EMPTY_SELECTED, autoFilters);
+    setBaseText(q); setSubcat(null); setSel(s); setSubmitted(q);
+    clearTimeout(debounce.current);
+    runSearch(q, null, s);
   }
 
-  function pickSuggestion(s: Suggestion) {
+  function pickSuggestion(sug: Suggestion) {
     skipSuggest.current = true;
-    setQ(s.term);                 // refleja en el campo la opción elegida
-    runSearch(s.term, s, autoFilters);
+    setQ(sug.term);
+    let base = EMPTY_SELECTED;
+    let sc: string | null = null;
+    if (sug.type === "category") base = { ...EMPTY_SELECTED, categories: [sug.term] };
+    else if (sug.type === "collection") base = { ...EMPTY_SELECTED, collections: [sug.term] };
+    else if (sug.type === "subcategory") sc = sug.term;
+    const s = withAutoFilters(base, autoFilters);
+    const label = [sug.term, ...autoFilters.map((f) => f.label)].filter(Boolean).join(" · ");
+    setBaseText(""); setSubcat(sc); setSel(s); setSubmitted(label);
+    clearTimeout(debounce.current);
+    runSearch("", sc, s);
+  }
+
+  // Cambio en el sidebar: actualiza selección, mantiene SCOPE, re-busca con debounce
+  function onFacetsChange(next: Selected) {
+    setSel(next);
+    clearTimeout(debounce.current);
+    debounce.current = window.setTimeout(() => runSearch(baseText, subcat, next), 220);
   }
 
   async function openProduct(sku: string) {
@@ -194,36 +236,44 @@ export default function App() {
         </form>
       </header>
 
-      <main className="rs-main">
-        {loading && <p className="rs-state">Buscando…</p>}
-        {error && <p className="rs-state rs-error">{error}</p>}
-
-        {!loading && total !== null && (
-          <h1 className="rs-count">{submitted} <span>({total})</span></h1>
+      <div className="rs-layout">
+        {facets && total !== null && total > 0 && (
+          <aside className="rs-sidebar">
+            <Facets facets={facets} selected={sel} onChange={onFacetsChange} />
+          </aside>
         )}
 
-        {!loading && total === 0 && (
-          <p className="rs-state">No se han encontrado productos para «{submitted}».</p>
-        )}
+        <main className="rs-main">
+          {loading && <p className="rs-state">Buscando…</p>}
+          {error && <p className="rs-state rs-error">{error}</p>}
 
-        <div className="rs-grid">
-          {results.map((r) => (
-            <article key={r.sku} className="rs-card" onClick={() => openProduct(r.sku)}>
-              <Tile image={r.image} title={r.title} label={r.category} />
-              {r.collection && <p className="rs-coll">{r.collection}</p>}
-              <h3 className="rs-title">{r.title}</h3>
-              <div className="rs-meta">
-                <div>Ref: {r.sku}</div>
-                {r.dims && <div>{r.dims}</div>}
-                {r.finish && <div>{r.finish}</div>}
-              </div>
-              {r.price_rrp != null && (
-                <div className="rs-price">PVPR: <b>{price(r.price_rrp)} €</b></div>
-              )}
-            </article>
-          ))}
-        </div>
-      </main>
+          {!loading && total !== null && (
+            <h1 className="rs-count">{submitted} <span>({total})</span></h1>
+          )}
+
+          {!loading && total === 0 && (
+            <p className="rs-state">No se han encontrado productos para «{submitted}».</p>
+          )}
+
+          <div className="rs-grid">
+            {results.map((r) => (
+              <article key={r.sku} className="rs-card" onClick={() => openProduct(r.sku)}>
+                <Tile image={r.image} title={r.title} label={r.category} />
+                {r.collection && <p className="rs-coll">{r.collection}</p>}
+                <h3 className="rs-title">{r.title}</h3>
+                <div className="rs-meta">
+                  <div>Ref: {r.sku}</div>
+                  {r.dims && <div>{r.dims}</div>}
+                  {r.finish && <div>{r.finish}</div>}
+                </div>
+                {r.price_rrp != null && (
+                  <div className="rs-price">PVPR: <b>{price(r.price_rrp)} €</b></div>
+                )}
+              </article>
+            ))}
+          </div>
+        </main>
+      </div>
 
       {detail && (
         <div className="rs-overlay" onClick={() => setDetail(null)}>
