@@ -8,6 +8,8 @@ export interface ProductSummary {
   finish: string | null;
   price_rrp: number | null;
   is_spare_part: boolean;
+  image: string | null;
+  dims: string | null;
 }
 
 export interface ProductDetail extends ProductSummary {

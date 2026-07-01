@@ -15,6 +15,18 @@ with open(os.path.join(DATA, "products.json"), encoding="utf-8") as f:
     PRODUCTS = json.load(f)
 with open(os.path.join(DATA, "relations.json"), encoding="utf-8") as f:
     RELATIONS = json.load(f)   # { model: [ {type, code, description, collection, category} ] }
+try:
+    with open(os.path.join(DATA, "images.json"), encoding="utf-8") as f:
+        IMAGES = json.load(f)  # { model: cloudinary_url }
+except FileNotFoundError:
+    IMAGES = {}
+
+
+def dims_str(p):
+    d = p.get("dims") or {}
+    parts = [d.get("length_mm"), d.get("width_mm"), d.get("height_mm")]
+    parts = [str(x) for x in parts if x]
+    return " x ".join(parts) if parts else None
 
 # --- Indices en memoria ---
 BY_SKU = {p["sku"]: p for p in PRODUCTS}
@@ -37,6 +49,7 @@ def summary(p):
         "sku": p["sku"], "title": p.get("title"), "category": p.get("category"),
         "collection": p.get("collection"), "finish": p.get("finish"),
         "price_rrp": p.get("price_rrp"), "is_spare_part": p.get("is_spare_part"),
+        "image": IMAGES.get(p.get("model")), "dims": dims_str(p),
     }
 
 app = FastAPI(title="Roca Buscador PoC", version="0.1.0")
@@ -87,7 +100,12 @@ def product_detail(sku: str):
         if not targets:
             continue
         grouped.setdefault(r["type"], []).extend(targets)
-    return {**p, "relations": grouped}
+    return {
+        **summary(p),
+        "subcategory": p.get("subcategory"),
+        "desc": p.get("desc") or {"marketing": None, "extended": None},
+        "relations": grouped,
+    }
 
 @app.get("/recommend/{sku}")
 def recommend(sku: str, intent: str = "complete_solution"):
