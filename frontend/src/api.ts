@@ -142,6 +142,50 @@ export async function getProduct(sku: string): Promise<ProductDetail> {
   return r.json();
 }
 
+// ---- Compra: online (carrito) y offline (distribuidores) --------------------
+// Forma mínima que necesitan carrito y buscador de tiendas. La produce cualquier
+// resultado del grid (card + variante). `online` = disponible para compra online
+// (el buscador lo expone a partir del flag `ecommerce` del catálogo).
+export interface ShopItem {
+  sku: string;
+  title: string | null;
+  image: string | null;
+  price_rrp: number | null;
+  finish?: string | null;
+  collection?: string | null;
+  online?: boolean;
+}
+
+export interface Supplier {
+  id: string;
+  name: string;
+  type: "gallery" | "distribuidor";
+  address: string;
+  city: string;
+  province: string;
+  postal_code: string;
+  phone: string;
+  lat: number;
+  lon: number;
+  official: boolean;
+  distance_km?: number;   // presente en /suppliers/nearby
+}
+
+export interface NearbyResponse {
+  origin: { lat: number; lon: number };
+  count: number;
+  suppliers: Supplier[];
+}
+
+export async function nearbySuppliers(
+  lat: number, lon: number, limit = 8
+): Promise<NearbyResponse> {
+  const p = new URLSearchParams({ lat: String(lat), lon: String(lon), limit: String(limit) });
+  const r = await fetch(`${API}/suppliers/nearby?${p.toString()}`);
+  if (!r.ok) throw new Error("No se han podido cargar los distribuidores");
+  return r.json();
+}
+
 // ---- Chat IA (opcional) ----
 export async function getHealth(): Promise<{ chat_ready: boolean }> {
   const r = await fetch(`${API}/health`);

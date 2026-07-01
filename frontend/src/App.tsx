@@ -4,10 +4,12 @@ import Facets from "./Facets";
 import Chat, { type ChatMsg } from "./Chat";
 import Tile, { PLACEHOLDER_IMG } from "./Tile";
 import ProductCard from "./ProductCard";
+import { useCart, CartDrawer } from "./cart";
+import LocalSuppliers from "./LocalSuppliers";
 import {
   search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED,
   type ProductSummary, type ProductDetail, type Suggestion, type Filter,
-  type Selected, type Facets as FacetsData, type ModelCard,
+  type Selected, type Facets as FacetsData, type ModelCard, type ShopItem,
 } from "./api";
 
 const CHAT_INTRO =
@@ -64,6 +66,16 @@ function SparkIcon() {
   );
 }
 
+function CartIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <circle cx="9" cy="20" r="1.4" />
+      <circle cx="18" cy="20" r="1.4" />
+      <path d="M2 3h3l2.2 12.3a1.5 1.5 0 0 0 1.5 1.2h8.4a1.5 1.5 0 0 0 1.5-1.2L21.5 7H6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export default function App() {
   const [q, setQ] = useState("");
   const [submitted, setSubmitted] = useState("");
@@ -73,6 +85,15 @@ export default function App() {
   const [detail, setDetail] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // --- compra: carrito online + buscador de distribuidores offline ---
+  const { addToCart, count: cartCount, setOpen: setCartOpen } = useCart();
+  const [localItem, setLocalItem] = useState<ShopItem | null>(null);
+
+  // Seam para los botones del buscador (los añade el colega):
+  //   "Compra online"            -> addToCart(item)
+  //   "Encuentra proveedor local"-> openLocalSuppliers(item)
+  function openLocalSuppliers(item: ShopItem) { setLocalItem(item); }
 
   // --- chat IA (opcional) ---
   const [aiOpen, setAiOpen] = useState(false);
@@ -345,6 +366,16 @@ export default function App() {
             <span>Búsqueda IA</span>
           </button>
         </form>
+        <button
+          type="button"
+          className="rs-cart-btn"
+          onClick={() => setCartOpen(true)}
+          aria-label={`Cesta (${cartCount})`}
+          title="Cesta"
+        >
+          <CartIcon />
+          {cartCount > 0 && <span className="rs-cart-badge">{cartCount}</span>}
+        </button>
       </header>
 
       <div className="rs-layout">
@@ -368,7 +399,13 @@ export default function App() {
 
           <div className="rs-grid">
             {results.map((c) => (
-              <ProductCard key={c.model} card={c} onOpen={openProduct} />
+              <ProductCard
+                key={c.model}
+                card={c}
+                onOpen={openProduct}
+                onBuyOnline={addToCart}
+                onFindLocal={openLocalSuppliers}
+              />
             ))}
           </div>
         </main>
@@ -384,6 +421,12 @@ export default function App() {
           onClose={() => setAiOpen(false)}
           onNew={newChat}
         />
+      )}
+
+      <CartDrawer />
+
+      {localItem && (
+        <LocalSuppliers item={localItem} onClose={() => setLocalItem(null)} />
       )}
 
       {detail && (

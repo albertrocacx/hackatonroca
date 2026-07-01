@@ -31,6 +31,14 @@ try:
 except FileNotFoundError:
     IMAGES = {}
 
+# red de distribuidores/showrooms para la compra OFFLINE (ver build_suppliers.py).
+# datos de demo: coordenadas de ciudad reales, nombres/direcciones ficticios.
+try:
+    with open(os.path.join(DATA, "suppliers.json"), encoding="utf-8") as f:
+        SUPPLIERS = json.load(f)
+except FileNotFoundError:
+    SUPPLIERS = []
+
 # --- Autocompletado: conceptos + embeddings (ver build_concepts.py) ---
 with open(os.path.join(DATA, "concepts.json"), encoding="utf-8") as f:
     CONCEPTS = json.load(f)
@@ -450,6 +458,40 @@ def product_detail(sku: str):
         "variants": [variant_summary(v) for v in BY_MODEL.get(p.get("model"), [])],
         "relations": grouped,
     }
+
+# ---------------------------------------------------------------- compra offline
+import math
+
+def _haversine_km(lat1, lon1, lat2, lon2):
+    """Distancia en km entre dos coordenadas (formula del semiverseno)."""
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+@app.get("/suppliers/nearby")
+def suppliers_nearby(lat: float, lon: float, limit: int = 8,
+                     official_only: bool = False):
+    """Distribuidores ordenados por cercanía a (lat, lon). Para la compra offline:
+    el frontend pide la geolocalización del usuario y llama aquí."""
+    pool = [s for s in SUPPLIERS if s["official"]] if official_only else SUPPLIERS
+    ranked = []
+    for s in pool:
+        d = _haversine_km(lat, lon, s["lat"], s["lon"])
+        ranked.append({**s, "distance_km": round(d, 1)})
+    ranked.sort(key=lambda s: s["distance_km"])
+    return {"origin": {"lat": lat, "lon": lon}, "count": len(ranked),
+            "suppliers": ranked[:limit]}
+
+
+@app.get("/suppliers")
+def suppliers_all():
+    """Red completa (para mostrar todos los puntos si el usuario deniega la ubicación)."""
+    return {"count": len(SUPPLIERS), "suppliers": SUPPLIERS}
+
 
 @app.get("/recommend/{sku}")
 def recommend(sku: str, intent: str = "complete_solution"):

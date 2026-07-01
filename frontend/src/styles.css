@@ -511,3 +511,143 @@ button { font-family: inherit; }
   .rs-app--chat { margin-right: 0; }   /* en móvil el panel se superpone */
   .rs-chat { width: 100%; }
 }
+
+/* ---------- botones de compra sobre la tarjeta (aparecen al hacer hover) ---------- */
+.rs-card-tilewrap { position: relative; }
+.rs-buy {
+  position: absolute;
+  left: 8px; right: 8px; bottom: 8px;
+  display: flex; flex-direction: column; gap: 6px;
+  opacity: 0; transform: translateY(6px);
+  transition: opacity .18s ease, transform .18s ease;
+  pointer-events: none;
+}
+.rs-card:hover .rs-buy { opacity: 1; transform: none; pointer-events: auto; }
+.rs-buy button {
+  border: none; cursor: pointer; font-family: inherit; font-size: 13px;
+  padding: 10px 12px; border-radius: 6px; white-space: nowrap;
+  transition: background .15s, box-shadow .15s;
+}
+.rs-buy-online { background: var(--ink); color: #fff; }
+.rs-buy-online:hover:not(:disabled) { background: #000; }
+.rs-buy-online:disabled { background: #d7d4cd; color: #fff; cursor: default; }
+.rs-buy-local {
+  background: #fff; color: var(--ink); border: 1px solid var(--ink) !important;
+}
+.rs-buy-local:hover { background: var(--taupe); border-color: var(--taupe) !important; color: #fff; }
+/* en táctil no hay hover: mostrar siempre */
+@media (hover: none) {
+  .rs-buy { opacity: 1; transform: none; pointer-events: auto; }
+}
+
+/* ---------- botón / badge de la cesta en la cabecera ---------- */
+.rs-cart-btn {
+  position: relative; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; border-radius: 6px;
+  border: 1px solid var(--line); background: #fff; color: var(--ink);
+  cursor: pointer; transition: border-color .15s;
+}
+.rs-cart-btn:hover { border-color: var(--ink); }
+.rs-cart-badge {
+  position: absolute; top: -6px; right: -6px;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  background: var(--taupe); color: #fff; border-radius: 999px;
+  font-size: 11px; line-height: 18px; text-align: center; font-weight: 600;
+}
+
+/* ---------- cajón de la cesta ---------- */
+.rs-cart-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 50; }
+.rs-cart {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 100%;
+  background: #fff; display: flex; flex-direction: column;
+  box-shadow: -24px 0 60px -30px rgba(0,0,0,.4);
+  animation: rs-chat-in .28s cubic-bezier(.2,.8,.2,1);
+}
+.rs-cart-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 20px; border-bottom: 1px solid var(--line);
+}
+.rs-cart-title { font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }
+.rs-cart-empty { padding: 40px 24px; color: var(--muted); text-align: center; line-height: 1.6; }
+.rs-cart-hint { font-size: 13px; }
+.rs-cart-ok { color: #1f7a44; font-size: 18px; font-weight: 600; }
+
+.rs-cart-list { list-style: none; margin: 0; padding: 8px 20px; overflow-y: auto; flex: 1; }
+.rs-cart-line {
+  display: grid; grid-template-columns: 64px 1fr auto; gap: 12px;
+  padding: 16px 0; border-bottom: 1px solid var(--line); align-items: start;
+}
+.rs-cart-thumb {
+  width: 64px; height: 64px; background: var(--tile);
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.rs-cart-thumb img { width: 100%; height: 100%; object-fit: contain; mix-blend-mode: multiply; }
+.rs-cart-name { margin: 0 0 2px; font-size: 14px; line-height: 1.35; }
+.rs-cart-sub { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+.rs-cart-qty { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.rs-cart-qty button {
+  width: 26px; height: 26px; border: 1px solid var(--line); background: #fff;
+  cursor: pointer; border-radius: 4px; font-size: 15px; line-height: 1; color: var(--ink);
+}
+.rs-cart-qty button:hover { border-color: var(--ink); }
+.rs-cart-remove {
+  width: auto !important; border: none !important; color: var(--muted) !important;
+  text-decoration: underline; font-size: 12px !important; padding: 0 0 0 4px;
+}
+.rs-cart-remove:hover { color: var(--ink) !important; }
+.rs-cart-price { font-size: 14px; font-weight: 600; white-space: nowrap; }
+
+.rs-cart-foot { border-top: 1px solid var(--line); padding: 18px 20px; }
+.rs-cart-total {
+  display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px;
+}
+.rs-cart-total b { font-size: 22px; }
+.rs-cart-checkout {
+  width: 100%; border: none; background: var(--ink); color: #fff;
+  font-family: inherit; font-size: 15px; padding: 14px; border-radius: 6px; cursor: pointer;
+}
+.rs-cart-checkout:hover { background: #000; }
+.rs-cart-clear {
+  width: 100%; border: none; background: none; color: var(--muted);
+  font-family: inherit; font-size: 13px; padding: 10px 0 0; cursor: pointer; text-decoration: underline;
+}
+.rs-cart-clear:hover { color: var(--ink); }
+
+/* ---------- modal de distribuidores (compra offline) ---------- */
+.rs-sup-panel { max-width: 960px; }
+.rs-sup-lead { color: var(--muted); margin: 4px 0 20px; }
+.rs-sup-body {
+  display: grid; grid-template-columns: 380px 1fr; gap: 24px; align-items: stretch;
+  min-height: 440px;
+}
+@media (max-width: 760px) { .rs-sup-body { grid-template-columns: 1fr; } }
+.rs-sup-list {
+  list-style: none; margin: 0; padding: 0; max-height: 480px; overflow-y: auto;
+}
+.rs-sup-item {
+  padding: 14px; border: 1px solid var(--line); border-radius: 8px;
+  margin-bottom: 10px; cursor: pointer; transition: border-color .15s, box-shadow .15s;
+}
+.rs-sup-item:hover { border-color: var(--ink); }
+.rs-sup-item.is-active { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink) inset; }
+.rs-sup-item-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.rs-sup-name { font-size: 15px; font-weight: 500; }
+.rs-sup-dist { color: var(--taupe); font-weight: 600; font-size: 14px; white-space: nowrap; }
+.rs-sup-badge {
+  display: inline-block; margin: 4px 0; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .06em; color: #fff; background: var(--taupe); padding: 2px 8px; border-radius: 999px;
+}
+.rs-sup-addr { margin: 6px 0 10px; color: var(--muted); font-size: 14px; line-height: 1.4; }
+.rs-sup-actions { display: flex; gap: 16px; font-size: 14px; }
+.rs-sup-actions a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--line); }
+.rs-sup-actions a:hover { border-color: var(--ink); color: var(--taupe); }
+.rs-sup-map {
+  min-height: 440px; border-radius: 8px; overflow: hidden; background: var(--tile);
+  border: 1px solid var(--line); z-index: 0;
+}
+.rs-sup-error { padding: 40px 0; text-align: center; color: var(--muted); }
+.rs-sup-error-actions {
+  display: flex; gap: 12px; justify-content: center; align-items: center; margin-top: 18px;
+}
+.rs-sup-error-actions .rs-cart-clear { width: auto; padding: 0; }
