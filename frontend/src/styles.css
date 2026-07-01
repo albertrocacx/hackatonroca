@@ -317,6 +317,18 @@ button { font-family: inherit; }
 .fac-sliders { display: grid; gap: 6px; }
 .fac-sliders input[type="range"] { width: 100%; accent-color: var(--ink); }
 
+/* ---------- tarjeta agrupada por modelo: thumbnails de acabado ---------- */
+.rs-card-main { cursor: pointer; }
+.rs-swatches { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.rs-swatch {
+  width: 44px; height: 44px; padding: 0;
+  border: 1px solid var(--line); background: var(--tile);
+  cursor: pointer; overflow: hidden; border-radius: 2px;
+}
+.rs-swatch img { width: 100%; height: 100%; object-fit: contain; mix-blend-mode: multiply; display: block; }
+.rs-swatch.is-active { border-color: var(--ink); border-width: 2px; }
+.rs-swatches--detail { margin-top: 20px; }
+
 /* ---------- botón Búsqueda IA ---------- */
 .rs-ai-btn {
   flex: 0 0 auto;

@@ -282,6 +282,29 @@ def _bounds(products, getter):
     return {"min": min(vals), "max": max(vals)}
 
 
+def variant_summary(p):
+    """Resumen ligero de una variante (acabado) para thumbnails y ficha."""
+    return {"sku": p["sku"], "finish": p.get("finish"),
+            "image": IMAGES.get(p["sku"]), "price_rrp": p.get("price_rrp"),
+            "dims": dims_str(p)}
+
+
+def _agg_models(products, field):
+    """Cuenta MODELOS distintos por valor (un modelo cuenta en cada valor que tenga).
+    Campos multivalor 'A|B' cuentan en cada segmento. Orden por count desc."""
+    groups = defaultdict(set)
+    for p in products:
+        val = p.get(field)
+        if not val:
+            continue
+        for seg in str(val).split("|"):
+            seg = seg.strip()
+            if seg:
+                groups[seg].add(p.get("model"))
+    return sorted(({"value": k, "count": len(s)} for k, s in groups.items()),
+                  key=lambda x: -x["count"])
+
+
 @app.get("/search")
 def search(q: str = "", limit: int = 30, include_spare: bool = False,
            subcategory: Optional[str] = None,
@@ -327,18 +350,45 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
         "height": (min_height, max_height),
     }
 
-    # parrilla = SCOPE que cumple todas las facetas, ordenada por score
+    # SKUs que cumplen todas las facetas, ordenados por score
     matched = [(s, p) for (s, p) in scope if matches(p, sel)]
     matched.sort(key=lambda x: -x[0])
 
-    # facetas con leave-one-out
+    # leave-one-out (facetas y variantes-thumbnails, estas ultimas sin el filtro de color)
     def loo(facet):
         return [p for (_, p) in scope if matches(p, sel, exclude=facet)]
+    finish_scope = loo("finish")
+
+    # variantes por modelo ignorando el filtro de color -> thumbnails de cada tarjeta
+    variants_by_model = defaultdict(list)
+    for p in finish_scope:
+        variants_by_model[p.get("model")].append(p)
+
+    # agrupa la parrilla por modelo: una tarjeta por modelo, en orden de relevancia
+    order, rep = [], {}
+    for _, p in matched:
+        m = p.get("model")
+        if m not in rep:
+            rep[m] = p
+            order.append(m)
+
+    def build_card(m):
+        variants = variants_by_model.get(m) or [rep[m]]
+        default = 0
+        if sel["finishes"]:
+            for i, v in enumerate(variants):
+                if any(_field_has(v, "finish", fv) for fv in sel["finishes"]):
+                    default = i
+                    break
+        p = rep[m]
+        return {"model": m, "title": p.get("title"), "collection": p.get("collection"),
+                "category": p.get("category"), "default": default,
+                "variants": [variant_summary(v) for v in variants]}
 
     facets = {
-        "category": _agg(loo("category"), "category_base"),
-        "collection": _agg(loo("collection"), "collection"),
-        "finish": _agg(loo("finish"), "finish"),
+        "category": _agg_models(loo("category"), "category_base"),
+        "collection": _agg_models(loo("collection"), "collection"),
+        "finish": _agg_models(finish_scope, "finish"),
         "price": _bounds(loo("price"), RANGE_GETTERS["price"]),
         "dims": {
             "length": _bounds(loo("length"), _len_mm),
@@ -347,8 +397,8 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
         },
     }
 
-    return {"query": q, "total": len(matched),
-            "results": [summary(p) for _, p in matched[:limit]],
+    return {"query": q, "total": len(order),
+            "results": [build_card(m) for m in order[:limit]],
             "facets": facets}
 
 
@@ -392,6 +442,7 @@ def product_detail(sku: str):
         **summary(p),
         "subcategory": p.get("subcategory"),
         "desc": p.get("desc") or {"marketing": None, "extended": None},
+        "variants": [variant_summary(v) for v in BY_MODEL.get(p.get("model"), [])],
         "relations": grouped,
     }
 
