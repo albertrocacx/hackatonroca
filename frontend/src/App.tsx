@@ -57,21 +57,39 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [autoFilters, setAutoFilters] = useState<Filter[]>([]);
   const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);   // fila resaltada por teclado
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const term = q.trim();
-    if (!term) { setSuggestions([]); setAutoFilters([]); return; }
+    if (!term) { setSuggestions([]); setAutoFilters([]); setActive(-1); return; }
     const t = setTimeout(async () => {
       try {
         const r = await suggest(q);
         setSuggestions(r.suggestions);
         setAutoFilters(r.filters);
+        setActive(-1);
         setOpen(true);
       } catch { /* silencioso: el autocompletado es best-effort */ }
     }, 180);
     return () => clearTimeout(t);
   }, [q]);
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!open || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive((a) => (a + 1) % suggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((a) => (a <= 0 ? suggestions.length - 1 : a - 1));
+    } else if (e.key === "Enter" && active >= 0) {
+      e.preventDefault();          // evita el submit del formulario: usamos la fila resaltada
+      pickSuggestion(suggestions[active]);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  }
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
@@ -125,6 +143,7 @@ export default function App() {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              onKeyDown={onKeyDown}
               onFocus={() => (suggestions.length || autoFilters.length) && setOpen(true)}
               placeholder="Introduce tu búsqueda"
               aria-label="Buscar"
@@ -154,7 +173,8 @@ export default function App() {
                   <button
                     type="button"
                     key={`${s.term}-${i}`}
-                    className="rs-suggest-item"
+                    className={`rs-suggest-item${i === active ? " is-active" : ""}`}
+                    onMouseEnter={() => setActive(i)}
                     onClick={() => pickSuggestion(s)}
                   >
                     <span className="rs-suggest-term">{s.term}</span>

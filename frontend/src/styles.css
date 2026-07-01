@@ -117,7 +117,8 @@ button { font-family: inherit; }
   font-size: 15px;
   color: var(--ink);
 }
-.rs-suggest-item:hover { background: var(--tile); }
+.rs-suggest-item:hover,
+.rs-suggest-item.is-active { background: var(--tile); }
 .rs-suggest-term { flex: 1; }
 .rs-suggest-tags { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .rs-suggest-type { font-size: 12px; color: var(--muted); }
