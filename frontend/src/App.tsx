@@ -140,7 +140,9 @@ export default function App() {
   return (
     <>
       <header className="rs-header">
-        <a className="rs-logo" href="#" onClick={(e) => e.preventDefault()}>Roca</a>
+        <a className="rs-logo" href="#" onClick={(e) => e.preventDefault()} aria-label="Roca">
+          <img src="https://www.roca.es/documents/20126/346080475/roca-logo.svg/4dc29d13-1df3-b628-786b-7c63db57cdcd?t=1753429104544" alt="Roca" />
+        </a>
         <form className="rs-searchform" onSubmit={doSearch}>
           <div className="rs-searchbox" ref={boxRef}>
             <SearchIcon />

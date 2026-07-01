@@ -35,26 +35,14 @@ button { font-family: inherit; }
 }
 
 .rs-logo {
-  font-family: Georgia, "Times New Roman", serif;
-  font-style: italic;
-  font-weight: 700;
-  font-size: 30px;
-  letter-spacing: -0.5px;
-  color: var(--ink);
-  text-decoration: none;
-  position: relative;
-  padding-bottom: 4px;
+  display: inline-flex;
+  align-items: center;
   flex: 0 0 auto;
 }
-.rs-logo::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 4px;
-  bottom: 0;
-  height: 3px;
-  background: var(--ink);
-  border-radius: 2px;
+.rs-logo img {
+  height: 34px;
+  width: auto;
+  display: block;
 }
 
 .rs-searchform {
