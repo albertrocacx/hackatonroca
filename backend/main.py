@@ -20,12 +20,9 @@ with open(os.path.join(DATA, "relations.json"), encoding="utf-8") as f:
     RELATIONS = json.load(f)   # { model: [ {type, code, description, collection, category} ] }
 try:
     with open(os.path.join(DATA, "images.json"), encoding="utf-8") as f:
-        IMAGES = json.load(f)  # { model: cloudinary_url }
+        IMAGES = json.load(f)  # { sku: cloudinary_url } — solo fotos de producto (ver tools/build_images.py)
 except FileNotFoundError:
     IMAGES = {}
-# Solo mostramos fotos de producto, nunca planos tecnicos: si la unica imagen
-# disponible es un "Technical Drawing" la descartamos y cae al placeholder.
-IMAGES = {m: url for m, url in IMAGES.items() if "Technical" not in url}
 
 # --- Autocompletado: conceptos + embeddings (ver build_concepts.py) ---
 with open(os.path.join(DATA, "concepts.json"), encoding="utf-8") as f:
@@ -82,7 +79,7 @@ def summary(p):
         "sku": p["sku"], "title": p.get("title"), "category": p.get("category"),
         "collection": p.get("collection"), "finish": p.get("finish"),
         "price_rrp": p.get("price_rrp"), "is_spare_part": p.get("is_spare_part"),
-        "image": IMAGES.get(p.get("model")), "dims": dims_str(p),
+        "image": IMAGES.get(p["sku"]), "dims": dims_str(p),
     }
 
 @asynccontextmanager
