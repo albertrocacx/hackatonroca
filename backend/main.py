@@ -42,12 +42,21 @@ except FileNotFoundError:
 # --- Autocompletado: conceptos + embeddings (ver build_concepts.py) ---
 with open(os.path.join(DATA, "concepts.json"), encoding="utf-8") as f:
     CONCEPTS = json.load(f)
-CONCEPT_VECTORS = np.load(os.path.join(DATA, "concept_vectors.npy"))  # (N, dim) normalizados
 INTENT = CONCEPTS["intent"]                     # [{term, type, count}] alineado con vectores
 COLOR_LEXICON = CONCEPTS["color_lexicon"]        # palabra normalizada -> [valores de acabado]
 QUALIFIERS = CONCEPTS["qualifiers"]              # palabra/frase -> 'high'|'low'
 PRICE_BANDS = CONCEPTS["price_bands"]            # categoria -> {p25, p75}  (+ '__global__')
 TEXTURES = ["mate", "brillo", "satinado", "pulido", "texturizado"]
+
+# El autocompletado SEMANTICO (embeddings model2vec descargados de HuggingFace) esta
+# desactivado por defecto: en instancias con poca RAM su carga dispara un OOM que reinicia
+# el contenedor en bucle. El autocompletado por PREFIJO funciona sin modelo. Para activarlo
+# en un entorno con memoria suficiente, define la variable de entorno ENABLE_SEMANTIC=1.
+ENABLE_SEMANTIC = os.getenv("ENABLE_SEMANTIC", "").strip().lower() in ("1", "true", "yes", "on")
+
+CONCEPT_VECTORS = None
+if ENABLE_SEMANTIC:
+    CONCEPT_VECTORS = np.load(os.path.join(DATA, "concept_vectors.npy"))  # (N, dim) normalizados
 
 # modelo de embeddings estatico (numpy puro, sin torch); se carga perezosamente
 _MODEL = None
@@ -107,12 +116,12 @@ def summary(p):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Precarga el modelo de embeddings EN SEGUNDO PLANO: no debe bloquear el arranque.
-    # (Si bloquea, la descarga del modelo desde HF puede exceder el timeout de startup de
-    # Railway -> el contenedor se reinicia y re-descarga en bucle. El modelo solo lo usa
-    # el autocompletado semantico; búsqueda/facetas/agrupación funcionan sin él.)
-    import asyncio
-    asyncio.get_running_loop().run_in_executor(None, _model)
+    # Solo con ENABLE_SEMANTIC=1 se precarga el modelo de embeddings, en segundo plano para
+    # no bloquear el arranque. Por defecto NO se carga: asi se evita la descarga desde HF y
+    # el OOM que reinicia el contenedor en bucle. Busqueda/facetas/agrupacion no lo necesitan.
+    if ENABLE_SEMANTIC:
+        import asyncio
+        asyncio.get_running_loop().run_in_executor(None, _model)
     yield
 
 
@@ -194,8 +203,8 @@ def parse_query(q: str):
                     suggestions.append({**c, "source": "prefix"})
             suggestions.sort(key=lambda x: -x["count"])
             suggestions = suggestions[:6]
-    # semantico: cuando hay palabra completa o frase multi-token
-    if intent_phrase and (ends_space or len(intent_tokens) >= 2 or not last_incomplete):
+    # semantico (solo si ENABLE_SEMANTIC): cuando hay palabra completa o frase multi-token
+    if ENABLE_SEMANTIC and intent_phrase and (ends_space or len(intent_tokens) >= 2 or not last_incomplete):
         qv = _model().encode([intent_phrase])[0].astype("float32")
         qv /= (np.linalg.norm(qv) + 1e-9)
         scores = CONCEPT_VECTORS @ qv
