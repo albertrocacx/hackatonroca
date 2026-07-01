@@ -6,6 +6,7 @@ v1: busqueda por texto simple + relaciones. Pensado para crecer
 """
 import json, os, re, unicodedata
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from typing import Optional
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query
@@ -81,7 +82,13 @@ def summary(p):
         "image": IMAGES.get(p.get("model")), "dims": dims_str(p),
     }
 
-app = FastAPI(title="Roca Buscador PoC", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _model()   # precarga el modelo de embeddings: evita latencia en la 1a sugerencia
+    yield
+
+
+app = FastAPI(title="Roca Buscador PoC", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
