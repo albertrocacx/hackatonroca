@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+backend/.venv/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Entornos / secretos
+.env
+*.local
+
+# Fuentes de datos originales (NO subir al repo: grandes / propietarias)
+*.xlsx
+*.csv
