@@ -23,6 +23,9 @@ try:
         IMAGES = json.load(f)  # { model: cloudinary_url }
 except FileNotFoundError:
     IMAGES = {}
+# Solo mostramos fotos de producto, nunca planos tecnicos: si la unica imagen
+# disponible es un "Technical Drawing" la descartamos y cae al placeholder.
+IMAGES = {m: url for m, url in IMAGES.items() if "Technical" not in url}
 
 # --- Autocompletado: conceptos + embeddings (ver build_concepts.py) ---
 with open(os.path.join(DATA, "concepts.json"), encoding="utf-8") as f:
