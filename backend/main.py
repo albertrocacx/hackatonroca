@@ -5,7 +5,7 @@ v1: busqueda por texto simple + relaciones. Pensado para crecer
 (mas adelante: interpretacion con Claude, embeddings, filtros avanzados).
 """
 import json, os, re, unicodedata
-from collections import defaultdict
+from collections import defaultdict, Counter
 from contextlib import asynccontextmanager
 from typing import Optional
 import numpy as np
@@ -202,44 +202,146 @@ def _field_has(p, field, value):
     return any(value == part.strip() for part in (p.get(field) or "").split("|"))
 
 
+def _num(v):
+    """Coerce a numero (las medidas vienen como texto en los datos). None si no se puede."""
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+def _len_mm(p):  return _num((p.get("dims") or {}).get("length_mm"))
+def _wid_mm(p):  return _num((p.get("dims") or {}).get("width_mm"))
+def _hei_mm(p):  return _num((p.get("dims") or {}).get("height_mm"))
+
+# getter de cada faceta de rango (para leave-one-out y para el filtro)
+RANGE_GETTERS = {"price": lambda p: _num(p.get("price_rrp")),
+                 "length": _len_mm, "width": _wid_mm, "height": _hei_mm}
+
+
+def _range_ok(v, lo, hi):
+    """True si v cae en [lo,hi]. Si el rango no esta activo -> True. Nulo con rango activo -> False."""
+    if lo is None and hi is None:
+        return True
+    if v is None:
+        return False
+    if lo is not None and v < lo:
+        return False
+    if hi is not None and v > hi:
+        return False
+    return True
+
+
+def matches(p, sel, exclude=None):
+    """Comprueba p contra la seleccion de facetas 'sel', saltando 'exclude' (leave-one-out)."""
+    if exclude != "category" and sel["categories"]:
+        if not any(_field_has(p, "category_base", c) for c in sel["categories"]):
+            return False
+    if exclude != "collection" and sel["collections"]:
+        if not any(_field_has(p, "collection", c) for c in sel["collections"]):
+            return False
+    if exclude != "finish" and sel["finishes"]:
+        if not any(_field_has(p, "finish", fv) for fv in sel["finishes"]):
+            return False
+    for key, getter in RANGE_GETTERS.items():
+        if exclude != key:
+            lo, hi = sel[key]
+            if not _range_ok(getter(p), lo, hi):
+                return False
+    return True
+
+
+def _agg(products, field):
+    """Cuenta valor -> nº (campos multivalor 'A|B' cuentan en cada segmento). Orden por count desc."""
+    c = Counter()
+    for p in products:
+        val = p.get(field)
+        if not val:
+            continue
+        for seg in str(val).split("|"):
+            seg = seg.strip()
+            if seg:
+                c[seg] += 1
+    return [{"value": k, "count": n} for k, n in c.most_common()]
+
+
+def _bounds(products, getter):
+    vals = [getter(p) for p in products]
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return None
+    return {"min": min(vals), "max": max(vals)}
+
+
 @app.get("/search")
 def search(q: str = "", limit: int = 30, include_spare: bool = False,
-           category: Optional[str] = None, subcategory: Optional[str] = None,
-           collection: Optional[str] = None,
+           subcategory: Optional[str] = None,
+           category: Optional[list[str]] = Query(None),
+           collection: Optional[list[str]] = Query(None),
            finish: Optional[list[str]] = Query(None),
-           min_price: Optional[float] = None, max_price: Optional[float] = None):
+           min_price: Optional[float] = None, max_price: Optional[float] = None,
+           min_length: Optional[float] = None, max_length: Optional[float] = None,
+           min_width: Optional[float] = None, max_width: Optional[float] = None,
+           min_height: Optional[float] = None, max_height: Optional[float] = None):
+    # normaliza los parametros lista (soporta llamada directa además de HTTP)
+    category = category if isinstance(category, list) else None
+    collection = collection if isinstance(collection, list) else None
+    finish = finish if isinstance(finish, list) else None
+
     tokens = [t for t in re.split(r"\s+", q.lower().strip()) if t]
-    results = []
+
+    # SCOPE = texto (q) + include_spare + subcategory ; con score de texto para ordenar
+    scope = []
     for p in PRODUCTS:
         if not include_spare and p.get("is_spare_part"):
             continue
-        if category and not _field_has(p, "category_base", category):
-            continue
         if subcategory and not _field_has(p, "subcategory", subcategory):
             continue
-        if collection and not _field_has(p, "collection", collection):
-            continue
-        if finish and not any(_field_has(p, "finish", fv) for fv in finish):
-            continue
-        rrp = p.get("price_rrp")
-        if min_price is not None and (rrp is None or rrp < min_price):
-            continue
-        if max_price is not None and (rrp is None or rrp > max_price):
-            continue
-        blob = SEARCH_INDEX[p["sku"]]
         if tokens:
+            blob = SEARCH_INDEX[p["sku"]]
             score = sum(1 for t in tokens if t in blob)
             if score == 0:
                 continue
-            # bonus si aparece en el titulo
             title = (p.get("title") or "").lower()
             score += sum(1 for t in tokens if t in title)
         else:
             score = 0
-        results.append((score, p))
-    results.sort(key=lambda x: -x[0])
-    return {"query": q, "total": len(results),
-            "results": [summary(p) for _, p in results[:limit]]}
+        scope.append((score, p))
+
+    sel = {
+        "categories": category or [],
+        "collections": collection or [],
+        "finishes": finish or [],
+        "price": (min_price, max_price),
+        "length": (min_length, max_length),
+        "width": (min_width, max_width),
+        "height": (min_height, max_height),
+    }
+
+    # parrilla = SCOPE que cumple todas las facetas, ordenada por score
+    matched = [(s, p) for (s, p) in scope if matches(p, sel)]
+    matched.sort(key=lambda x: -x[0])
+
+    # facetas con leave-one-out
+    def loo(facet):
+        return [p for (_, p) in scope if matches(p, sel, exclude=facet)]
+
+    facets = {
+        "category": _agg(loo("category"), "category_base"),
+        "collection": _agg(loo("collection"), "collection"),
+        "finish": _agg(loo("finish"), "finish"),
+        "price": _bounds(loo("price"), RANGE_GETTERS["price"]),
+        "dims": {
+            "length": _bounds(loo("length"), _len_mm),
+            "width": _bounds(loo("width"), _wid_mm),
+            "height": _bounds(loo("height"), _hei_mm),
+        },
+    }
+
+    return {"query": q, "total": len(matched),
+            "results": [summary(p) for _, p in matched[:limit]],
+            "facets": facets}
 
 def resolve(code):
     """ code (modelo, con posibles '..') -> productos reales del catalogo """

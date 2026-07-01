@@ -264,3 +264,55 @@ button { font-family: inherit; }
 }
 .rs-rel-item:hover { color: var(--taupe); }
 .rs-rel-item span { color: var(--muted); white-space: nowrap; }
+
+/* ---------- layout con barra lateral de facetas ---------- */
+.rs-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 40px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 40px;
+}
+.rs-layout .rs-main { max-width: none; margin: 0; padding: 0 0 80px; flex: 1 1 auto; min-width: 0; }
+.rs-sidebar {
+  flex: 0 0 260px;
+  position: sticky;
+  top: 96px;
+  align-self: flex-start;
+  padding-top: 64px;
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+}
+@media (max-width: 900px) {
+  .rs-layout { flex-direction: column; padding: 0 20px; }
+  .rs-sidebar { position: static; flex-basis: auto; width: 100%; padding-top: 24px; max-height: none; }
+}
+
+/* ---------- facetas ---------- */
+.fac { font-size: 15px; }
+.fac-empty { color: var(--muted); padding-top: 64px; }
+.fac-sec { border-bottom: 1px solid var(--line); padding: 14px 0; }
+.fac-head {
+  display: flex; justify-content: space-between; align-items: center;
+  width: 100%; border: none; background: none; cursor: pointer;
+  padding: 4px 0; font-size: 16px; color: var(--ink); font-family: inherit;
+}
+.fac-chev { color: var(--muted); }
+.fac-list { list-style: none; margin: 10px 0 0; padding: 0; }
+.fac-list li { margin: 2px 0; }
+.fac-check {
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer; padding: 4px 0; line-height: 1.3;
+}
+.fac-check input { accent-color: var(--ink); width: 16px; height: 16px; flex: 0 0 auto; }
+.fac-val { flex: 1; }
+.fac-count { color: var(--muted); font-size: 13px; }
+.fac-more {
+  border: none; background: none; cursor: pointer; color: var(--ink);
+  text-decoration: underline; padding: 8px 0 0; font-size: 14px; font-family: inherit;
+}
+.fac-range { padding: 12px 0 4px; }
+.fac-range-vals { font-size: 14px; color: var(--ink); margin-bottom: 8px; }
+.fac-sliders { display: grid; gap: 6px; }
+.fac-sliders input[type="range"] { width: 100%; accent-color: var(--ink); }
