@@ -6,6 +6,7 @@ import Tile, { PLACEHOLDER_IMG } from "./Tile";
 import ProductCard from "./ProductCard";
 import { useCart, CartDrawer } from "./cart";
 import LocalSuppliers from "./LocalSuppliers";
+import ProductCta from "./ProductCta";
 import {
   search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED,
   type ProductSummary, type ProductDetail, type Suggestion, type Filter,
@@ -464,6 +465,17 @@ export default function App() {
                     ))}
                   </div>
                 )}
+                <ProductCta
+                  priceType={detail.price_type}
+                  item={{
+                    sku: detail.sku, title: detail.title, image: detail.image,
+                    price_rrp: detail.price_rrp, finish: detail.finish,
+                    collection: detail.collection,
+                    online: detail.price_type === "OnlineFrom",
+                  }}
+                  onBuyOnline={addToCart}
+                  onFindLocal={openLocalSuppliers}
+                />
               </div>
             </div>
 

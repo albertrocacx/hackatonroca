@@ -186,7 +186,7 @@ button { font-family: inherit; }
 @media (max-width: 900px)  { .rs-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 600px)  { .rs-grid { grid-template-columns: 1fr; } .rs-main { padding: 0 20px 60px; } .rs-header { padding: 14px 20px; gap: 14px; } }
 
-.rs-card { cursor: pointer; }
+.rs-card { }
 .rs-tile {
   background: var(--tile);
   aspect-ratio: 1 / 1;
@@ -400,6 +400,30 @@ button { font-family: inherit; }
 .rs-swatch.is-active { border-color: var(--ink); border-width: 2px; }
 .rs-swatches--detail { margin-top: 20px; }
 
+/* ---------- CTAs de producto ---------- */
+.rs-cta-row { margin-top: 16px; }
+.rs-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 2px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+  cursor: pointer;
+  transition: opacity .2s ease;
+}
+.rs-cta:hover { opacity: .88; }
+.rs-cta--buy { background: #215f7d; }
+.rs-cta--where { background: #000; }
+.rs-cta-icon { width: 18px; height: 18px; flex-shrink: 0; }
+.rs-cta-arrow { font-size: 16px; line-height: 1; }
+
 /* ---------- botón Búsqueda IA ---------- */
 .rs-ai-btn {
   flex: 0 0 auto;
@@ -510,34 +534,6 @@ button { font-family: inherit; }
 @media (max-width: 900px) {
   .rs-app--chat { margin-right: 0; }   /* en móvil el panel se superpone */
   .rs-chat { width: 100%; }
-}
-
-/* ---------- botones de compra sobre la tarjeta (aparecen al hacer hover) ---------- */
-.rs-card-tilewrap { position: relative; }
-.rs-buy {
-  position: absolute;
-  left: 8px; right: 8px; bottom: 8px;
-  display: flex; flex-direction: column; gap: 6px;
-  opacity: 0; transform: translateY(6px);
-  transition: opacity .18s ease, transform .18s ease;
-  pointer-events: none;
-}
-.rs-card:hover .rs-buy { opacity: 1; transform: none; pointer-events: auto; }
-.rs-buy button {
-  border: none; cursor: pointer; font-family: inherit; font-size: 13px;
-  padding: 10px 12px; border-radius: 6px; white-space: nowrap;
-  transition: background .15s, box-shadow .15s;
-}
-.rs-buy-online { background: var(--ink); color: #fff; }
-.rs-buy-online:hover:not(:disabled) { background: #000; }
-.rs-buy-online:disabled { background: #d7d4cd; color: #fff; cursor: default; }
-.rs-buy-local {
-  background: #fff; color: var(--ink); border: 1px solid var(--ink) !important;
-}
-.rs-buy-local:hover { background: var(--taupe); border-color: var(--taupe) !important; color: #fff; }
-/* en táctil no hay hover: mostrar siempre */
-@media (hover: none) {
-  .rs-buy { opacity: 1; transform: none; pointer-events: auto; }
 }
 
 /* ---------- botón / badge de la cesta en la cabecera ---------- */
