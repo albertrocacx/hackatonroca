@@ -19,6 +19,17 @@ try:
 except Exception:  # noqa: BLE001
     chat = None
 
+# búsqueda semántica (Azure AI Search). Si el módulo/SDK no carga, /search cae al
+# buscador de texto por substring (fallback) para que la app nunca se rompa.
+try:
+    import azure_search
+except Exception:  # noqa: BLE001
+    azure_search = None
+
+# nº de vecinos a pedir a Azure. Alto para que las facetas tengan suficiente material
+# (las facetas se calculan sobre el conjunto devuelto). Configurable por entorno.
+AZURE_K = int(os.getenv("AZURE_SEARCH_K", "120"))
+
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 with open(os.path.join(DATA, "products.json"), encoding="utf-8") as f:
@@ -350,24 +361,48 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
     collection = collection if isinstance(collection, list) else None
     finish = finish if isinstance(finish, list) else None
 
+    q_clean = q.strip()
     tokens = [t for t in re.split(r"\s+", q.lower().strip()) if t]
 
-    # SCOPE = texto (q) + include_spare + subcategory ; con score de texto para ordenar
+    # Ranking por texto (q):
+    #   - sin query  -> navegación: todo el catálogo con score 0 (solo facetas).
+    #   - con query  -> Azure AI Search (semántico/híbrido) devuelve {model -> score};
+    #                   solo entran esos modelos, ordenados por relevancia de Azure.
+    #   - si Azure no está disponible o falla -> fallback al buscador por substring.
+    model_scores = None
+    use_fallback = False
+    if q_clean:
+        if azure_search is None:
+            use_fallback = True
+        else:
+            try:
+                model_scores = azure_search.search_models(q_clean, k=AZURE_K)
+            except Exception as e:  # noqa: BLE001 — Azure caído/timeout: no romper la búsqueda
+                use_fallback = True
+                print(f"[/search] Azure FALLO ({e!r}) -> fallback substring", flush=True)
+        engine = "fallback-substring" if use_fallback else "azure-semantic"
+        n = 0 if model_scores is None else len(model_scores)
+        print(f"[/search] q={q_clean!r} motor={engine} modelos_azure={n}", flush=True)
+
+    # SCOPE = texto (q) + include_spare + subcategory ; con score para ordenar
     scope = []
     for p in PRODUCTS:
         if not include_spare and p.get("is_spare_part"):
             continue
         if subcategory and not _field_has(p, "subcategory", subcategory):
             continue
-        if tokens:
+        if not q_clean:
+            score = 0
+        elif use_fallback:
             blob = SEARCH_INDEX[p["sku"]]
             score = sum(1 for t in tokens if t in blob)
             if score == 0:
                 continue
-            title = (p.get("title") or "").lower()
-            score += sum(1 for t in tokens if t in title)
+            score += sum(1 for t in tokens if t in (p.get("title") or "").lower())
         else:
-            score = 0
+            score = model_scores.get(p.get("model"))
+            if score is None:                 # modelo no devuelto por Azure -> fuera
+                continue
         scope.append((score, p))
 
     sel = {
