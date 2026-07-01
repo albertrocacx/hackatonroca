@@ -159,16 +159,17 @@ export interface ShopItem {
 export interface Supplier {
   id: string;
   name: string;
-  type: "gallery" | "distribuidor";
-  address: string;
-  city: string;
-  province: string;
+  address: string | null;
+  city: string | null;
+  province: string | null;
   postal_code: string;
-  phone: string;
+  phone: string | null;
+  web: string | null;
   lat: number;
   lon: number;
-  official: boolean;
-  distance_km?: number;   // presente en /suppliers/nearby
+  exposition: boolean;        // punto de venta con exposición Roca
+  category: string | null;    // "Con exposición" | "Sin exposición"
+  distance_km?: number;       // presente en /suppliers/nearby
 }
 
 export interface NearbyResponse {

@@ -129,7 +129,7 @@ export default function LocalSuppliers({
         for (const s of suppliers) {
           const mk = L.circleMarker([s.lat, s.lon], {
             radius: 7, color: "#1a1a1a",
-            fillColor: s.official ? "#9b8b72" : "#fff", fillOpacity: 1, weight: 2,
+            fillColor: s.exposition ? "#9b8b72" : "#fff", fillOpacity: 1, weight: 2,
           })
             .addTo(map)
             .bindPopup(`<b>${s.name}</b><br>${s.address}, ${s.city}<br>${s.distance_km} km`);
@@ -209,15 +209,25 @@ export default function LocalSuppliers({
                       <span className="rs-sup-dist">{s.distance_km} km</span>
                     )}
                   </div>
-                  {s.official && <span className="rs-sup-badge">Showroom oficial</span>}
-                  <p className="rs-sup-addr">{s.address}, {s.postal_code} {s.city}</p>
+                  {s.exposition && <span className="rs-sup-badge">Con exposición</span>}
+                  <p className="rs-sup-addr">
+                    {[s.address, [s.postal_code, s.city].filter(Boolean).join(" ")]
+                      .filter(Boolean).join(", ")}
+                  </p>
                   <div className="rs-sup-actions">
-                    <a href={`tel:${s.phone.replace(/\s/g, "")}`} onClick={(e) => e.stopPropagation()}>
-                      {s.phone}
-                    </a>
+                    {s.phone && (
+                      <a href={`tel:${s.phone.replace(/\s/g, "")}`} onClick={(e) => e.stopPropagation()}>
+                        {s.phone}
+                      </a>
+                    )}
                     <a href={mapsLink(s)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
                       Cómo llegar →
                     </a>
+                    {s.web && (
+                      <a href={s.web} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+                        Web →
+                      </a>
+                    )}
                   </div>
                 </li>
               ))}

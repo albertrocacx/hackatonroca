@@ -1,100 +1,106 @@
 """
-Genera data/suppliers.json: red de distribuidores/showrooms Roca con coordenadas.
+Genera data/suppliers.json a partir del export oficial de puntos de venta Roca
+(Roca_ES_POS_*.xlsx, hoja LOCATION).
 
-DATOS DE DEMO. Las coordenadas de ciudad son geografia publica, pero los nombres,
-direcciones y telefonos de tienda son FICTICIOS (PoC de hackathon). Sustituir por el
-maestro real de puntos de venta Roca antes de cualquier uso con clientes.
+Datos REALES de la red de distribuidores Roca en España (861 POS geolocalizados).
+Se excluyen a propósito los campos sensibles del export (CIF y emails de contacto
+internos): se conserva solo lo que muestra el localizador público de tiendas
+(nombre, dirección, teléfono, web, coordenadas, si tiene exposición).
 
-Uso: python build_suppliers.py   ->   data/suppliers.json
+Uso: python build_suppliers.py [ruta_al_xlsx]   ->   data/suppliers.json
 """
-import json, os
+import glob, json, os, sys
+import openpyxl
 
-DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+HERE = os.path.dirname(os.path.abspath(__file__))
+DATA = os.path.join(HERE, "data")
+REPO = os.path.dirname(HERE)   # .../hackatonroca
 
-# (ciudad, provincia, lat, lon, tipo)  — lat/lon = centro aproximado de la ciudad.
-# tipo: "gallery" (showroom oficial Roca) | "distribuidor" (punto de venta asociado)
-CITIES = [
-    ("Barcelona", "Barcelona", 41.3874, 2.1686, "gallery"),
-    ("Madrid", "Madrid", 40.4168, -3.7038, "gallery"),
-    ("Valencia", "Valencia", 39.4699, -0.3763, "gallery"),
-    ("Sevilla", "Sevilla", 37.3891, -5.9845, "gallery"),
-    ("Bilbao", "Bizkaia", 43.2630, -2.9350, "gallery"),
-    ("Málaga", "Málaga", 36.7213, -4.4214, "distribuidor"),
-    ("Zaragoza", "Zaragoza", 41.6488, -0.8891, "distribuidor"),
-    ("Palma", "Illes Balears", 39.5696, 2.6502, "distribuidor"),
-    ("A Coruña", "A Coruña", 43.3623, -8.4115, "distribuidor"),
-    ("Vigo", "Pontevedra", 42.2406, -8.7207, "distribuidor"),
-    ("Gijón", "Asturias", 43.5322, -5.6611, "distribuidor"),
-    ("Granada", "Granada", 37.1773, -3.5986, "distribuidor"),
-    ("Murcia", "Murcia", 37.9922, -1.1307, "distribuidor"),
-    ("Alicante", "Alicante", 38.3452, -0.4810, "distribuidor"),
-    ("Córdoba", "Córdoba", 37.8882, -4.7794, "distribuidor"),
-    ("Valladolid", "Valladolid", 41.6523, -4.7245, "distribuidor"),
-    ("San Sebastián", "Gipuzkoa", 43.3183, -1.9812, "distribuidor"),
-    ("Pamplona", "Navarra", 42.8125, -1.6458, "distribuidor"),
-    ("Santander", "Cantabria", 43.4623, -3.8099, "distribuidor"),
-    ("Salamanca", "Salamanca", 40.9701, -5.6635, "distribuidor"),
-    ("León", "León", 42.5987, -5.5671, "distribuidor"),
-    ("Burgos", "Burgos", 42.3439, -3.6969, "distribuidor"),
-    ("Toledo", "Toledo", 39.8628, -4.0273, "distribuidor"),
-    ("Almería", "Almería", 36.8340, -2.4637, "distribuidor"),
-    ("Cádiz", "Cádiz", 36.5271, -6.2886, "distribuidor"),
-    ("Logroño", "La Rioja", 42.4627, -2.4449, "distribuidor"),
-    ("Castellón", "Castellón", 39.9864, -0.0513, "distribuidor"),
-    # Área metropolitana de Barcelona (densidad alta: RocaSalvatella/Roca son de aquí)
-    ("L'Hospitalet de Llobregat", "Barcelona", 41.3596, 2.0999, "distribuidor"),
-    ("Badalona", "Barcelona", 41.4500, 2.2474, "distribuidor"),
-    ("Sabadell", "Barcelona", 41.5463, 2.1086, "distribuidor"),
-    ("Terrassa", "Barcelona", 41.5615, 2.0084, "distribuidor"),
-    ("Mataró", "Barcelona", 41.5388, 2.4449, "distribuidor"),
-    ("Girona", "Girona", 41.9794, 2.8214, "distribuidor"),
-    ("Tarragona", "Tarragona", 41.1189, 1.2445, "distribuidor"),
-    ("Reus", "Tarragona", 41.1550, 1.1075, "distribuidor"),
-    ("Lleida", "Lleida", 41.6176, 0.6200, "distribuidor"),
-    ("Manresa", "Barcelona", 41.7230, 1.8265, "distribuidor"),
-    # Área metropolitana de Madrid
-    ("Getafe", "Madrid", 40.3082, -3.7326, "distribuidor"),
-    ("Alcalá de Henares", "Madrid", 40.4818, -3.3644, "distribuidor"),
-    ("Móstoles", "Madrid", 40.3223, -3.8649, "distribuidor"),
-]
+# provincia por prefijo de código postal (2 primeros dígitos)
+CP_PROV = {
+    "01": "Álava", "02": "Albacete", "03": "Alicante", "04": "Almería", "05": "Ávila",
+    "06": "Badajoz", "07": "Illes Balears", "08": "Barcelona", "09": "Burgos",
+    "10": "Cáceres", "11": "Cádiz", "12": "Castellón", "13": "Ciudad Real", "14": "Córdoba",
+    "15": "A Coruña", "16": "Cuenca", "17": "Girona", "18": "Granada", "19": "Guadalajara",
+    "20": "Gipuzkoa", "21": "Huelva", "22": "Huesca", "23": "Jaén", "24": "León",
+    "25": "Lleida", "26": "La Rioja", "27": "Lugo", "28": "Madrid", "29": "Málaga",
+    "30": "Murcia", "31": "Navarra", "32": "Ourense", "33": "Asturias", "34": "Palencia",
+    "35": "Las Palmas", "36": "Pontevedra", "37": "Salamanca", "38": "Santa Cruz de Tenerife",
+    "39": "Cantabria", "40": "Segovia", "41": "Sevilla", "42": "Soria", "43": "Tarragona",
+    "44": "Teruel", "45": "Toledo", "46": "Valencia", "47": "Valladolid", "48": "Bizkaia",
+    "49": "Zamora", "50": "Zaragoza", "51": "Ceuta", "52": "Melilla",
+}
 
-# nombres ficticios deterministas por ciudad (no son razones sociales reales)
-STREETS = ["Av. Diagonal", "C/ Mayor", "Av. de la Constitución", "Ronda Litoral",
-           "C/ Industria", "Pol. Ind. Les Comes", "Av. del Puerto", "C/ del Comercio",
-           "Ctra. Nacional II, km 12", "C/ San Juan"]
+CATEGORY_LABEL = {"WITH_EXPOSITION": "Con exposición", "WITHOUT_EXPOSITION": "Sin exposición"}
+
+# índices de columna en la hoja LOCATION (ver cabecera del export)
+C_ID, C_AREA, C_CAT = 1, 2, 4
+C_ZIP, C_CODE, C_COMPANY = 9, 10, 12
+NAME_PAIRS = [(13, 14), (15, 16), (17, 18), (19, 20), (21, 22)]   # (NAME, LOCALE)
+ADDR_PAIRS = [(27, 28), (29, 30)]                                  # (ADDRESS, LOCALE)
+C_LNG, C_LAT, C_PHONE, C_WEB = 7, 8, 35, 43
 
 
-def build():
-    suppliers = []
-    for i, (city, prov, lat, lon, kind) in enumerate(CITIES):
-        if kind == "gallery":
-            name = f"Roca {city} Gallery"
-            phone_area = 800 + i
-        else:
-            name = f"Saneamientos {city}"
-            phone_area = 900 + i
-        street = STREETS[i % len(STREETS)]
-        num = 10 + (i * 7) % 180
-        suppliers.append({
-            "id": f"sup-{i:03d}",
+def _es(row, pairs):
+    """Valor con LOCALE es_ES entre pares (valor, locale); si no, el primero no vacío."""
+    first = None
+    for vi, li in pairs:
+        v = row[vi]
+        if v in (None, ""):
+            continue
+        if row[li] == "es_ES":
+            return str(v).strip()
+        if first is None:
+            first = str(v).strip()
+    return first
+
+
+def build(xlsx):
+    wb = openpyxl.load_workbook(xlsx, read_only=True, data_only=True)
+    ws = wb["LOCATION"]
+    out = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row[C_ID]:
+            continue
+        lat, lon = row[C_LAT], row[C_LNG]
+        if lat in (None, "") or lon in (None, ""):
+            continue
+        name = (str(row[C_COMPANY]).strip() if row[C_COMPANY] else None) or _es(row, NAME_PAIRS)
+        if not name:
+            continue
+        zip_ = str(row[C_ZIP]).strip() if row[C_ZIP] else ""
+        cat = row[C_CAT]
+        web = str(row[C_WEB]).strip() if row[C_WEB] else None
+        if web and not web.startswith(("http://", "https://")):
+            web = "https://" + web
+        out.append({
+            "id": str(row[C_ID]),
             "name": name,
-            "type": kind,
-            "address": f"{street}, {num}",
-            "city": city,
-            "province": prov,
-            "postal_code": f"{(8000 + i * 137) % 52000:05d}",
-            "phone": f"+34 {phone_area % 1000:03d} {100 + i:03d} {200 + i:03d}",
-            "lat": round(lat, 5),
-            "lon": round(lon, 5),
-            # showrooms oficiales exponen todo el catálogo; los distribuidores, bajo pedido
-            "official": kind == "gallery",
+            "address": _es(row, ADDR_PAIRS),
+            "city": str(row[C_AREA]).strip() if row[C_AREA] else None,
+            "province": CP_PROV.get(zip_[:2]),
+            "postal_code": zip_,
+            "phone": str(row[C_PHONE]).strip() if row[C_PHONE] else None,
+            "web": web,
+            "lat": round(float(lat), 6),
+            "lon": round(float(lon), 6),
+            "exposition": cat == "WITH_EXPOSITION",
+            "category": CATEGORY_LABEL.get(cat),
         })
 
-    out = os.path.join(DATA, "suppliers.json")
-    with open(out, "w", encoding="utf-8") as f:
-        json.dump(suppliers, f, ensure_ascii=False, indent=1)
-    print(f"escritos {len(suppliers)} distribuidores -> {out}")
+    dst = os.path.join(DATA, "suppliers.json")
+    with open(dst, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=1)
+    exp = sum(1 for s in out if s["exposition"])
+    print(f"escritos {len(out)} puntos de venta ({exp} con exposición) -> {dst}")
 
 
 if __name__ == "__main__":
-    build()
+    if len(sys.argv) > 1:
+        xlsx = sys.argv[1]
+    else:
+        hits = glob.glob(os.path.join(REPO, "Roca_ES_POS_*.xlsx"))
+        if not hits:
+            sys.exit("No encuentro Roca_ES_POS_*.xlsx en la raíz del repo; pásalo como argumento.")
+        xlsx = max(hits)   # el más reciente por nombre (lleva fecha)
+    build(xlsx)

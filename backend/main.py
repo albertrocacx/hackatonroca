@@ -31,8 +31,8 @@ try:
 except FileNotFoundError:
     IMAGES = {}
 
-# red de distribuidores/showrooms para la compra OFFLINE (ver build_suppliers.py).
-# datos de demo: coordenadas de ciudad reales, nombres/direcciones ficticios.
+# red de distribuidores/puntos de venta para la compra OFFLINE (ver build_suppliers.py).
+# datos reales del export oficial de POS Roca en España (861 puntos geolocalizados).
 try:
     with open(os.path.join(DATA, "suppliers.json"), encoding="utf-8") as f:
         SUPPLIERS = json.load(f)
@@ -474,10 +474,10 @@ def _haversine_km(lat1, lon1, lat2, lon2):
 
 @app.get("/suppliers/nearby")
 def suppliers_nearby(lat: float, lon: float, limit: int = 8,
-                     official_only: bool = False):
-    """Distribuidores ordenados por cercanía a (lat, lon). Para la compra offline:
+                     exposition_only: bool = False):
+    """Puntos de venta ordenados por cercanía a (lat, lon). Para la compra offline:
     el frontend pide la geolocalización del usuario y llama aquí."""
-    pool = [s for s in SUPPLIERS if s["official"]] if official_only else SUPPLIERS
+    pool = [s for s in SUPPLIERS if s.get("exposition")] if exposition_only else SUPPLIERS
     ranked = []
     for s in pool:
         d = _haversine_km(lat, lon, s["lat"], s["lon"])
