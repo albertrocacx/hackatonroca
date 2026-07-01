@@ -2,9 +2,9 @@
 #   - tools/extract_search_text.py : solo libreria estandar (sin dependencias).
 #   - testfiles/procesar_blobs.ipynb: descarga/sube blobs y se ejecuta como notebook.
 #
-# Instalacion:
+# Instalacion (desde la raiz del proyecto):
 #   python -m venv .venv
-#   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+#   .\.venv\Scripts\python.exe -m pip install -r testfiles/requirements.txt
 
 azure-storage-blob==12.30.0   # cliente de Azure Blob Storage (usado por el notebook)
 ipykernel==7.3.0              # kernel para ejecutar procesar_blobs.ipynb
