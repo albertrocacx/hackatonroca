@@ -91,7 +91,12 @@ def summary(p):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _model()   # precarga el modelo de embeddings: evita latencia en la 1a sugerencia
+    # Precarga el modelo de embeddings EN SEGUNDO PLANO: no debe bloquear el arranque.
+    # (Si bloquea, la descarga del modelo desde HF puede exceder el timeout de startup de
+    # Railway -> el contenedor se reinicia y re-descarga en bucle. El modelo solo lo usa
+    # el autocompletado semantico; búsqueda/facetas/agrupación funcionan sin él.)
+    import asyncio
+    asyncio.get_running_loop().run_in_executor(None, _model)
     yield
 
 
