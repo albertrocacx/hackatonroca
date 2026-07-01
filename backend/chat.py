@@ -96,11 +96,17 @@ SEARCH_SCHEMA = {
       "Busca productos en el catálogo Roca por lenguaje natural + filtros opcionales. "
       "Los resultados se muestran automáticamente en la parrilla del usuario.",
       SEARCH_SCHEMA)
+def _brief_from_card(c):
+    """Los resultados son tarjetas-modelo; resume por su variante por defecto."""
+    variants = c.get("variants") or []
+    v = variants[c.get("default", 0)] if variants else {}
+    return {"sku": v.get("sku"), "title": c.get("title"), "collection": c.get("collection"),
+            "finish": v.get("finish"), "price_rrp": v.get("price_rrp")}
+
+
 async def _search_catalog_tool(args):
     data = _run_search(**_search_kwargs(args, MODEL_TOP))
-    brief = [{"sku": r["sku"], "title": r["title"], "collection": r["collection"],
-              "finish": r["finish"], "price_rrp": r["price_rrp"]}
-             for r in data.get("results", [])]
+    brief = [_brief_from_card(c) for c in data.get("results", [])]
     payload = {"total": data.get("total", 0), "results": brief}
     return {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]}
 

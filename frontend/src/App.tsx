@@ -2,10 +2,12 @@ import { useState, useEffect, useRef, type FormEvent } from "react";
 import "./styles.css";
 import Facets from "./Facets";
 import Chat, { type ChatMsg } from "./Chat";
+import Tile, { PLACEHOLDER_IMG } from "./Tile";
+import ProductCard from "./ProductCard";
 import {
   search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED,
   type ProductSummary, type ProductDetail, type Suggestion, type Filter,
-  type Selected, type Facets as FacetsData,
+  type Selected, type Facets as FacetsData, type ModelCard,
 } from "./api";
 
 const CHAT_INTRO =
@@ -30,8 +32,6 @@ function price(p: number | null) {
   return p.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-const PLACEHOLDER_IMG = "https://www.roca.es/o/roca-restyle-theme/images/product-thumbnail.jpg";
-
 // Combina la selección base (concepto) con los filtros auto-detectados por el autocompletado
 function withAutoFilters(base: Selected, filters: Filter[]): Selected {
   const s: Selected = {
@@ -44,16 +44,6 @@ function withAutoFilters(base: Selected, filters: Filter[]): Selected {
     if (f.type === "price") s.price = { min: f.min_price ?? null, max: f.max_price ?? null };
   }
   return s;
-}
-
-function Tile({ image, title }: { image: string | null; title: string | null }) {
-  const [broken, setBroken] = useState(false);
-  const src = image && !broken ? image : PLACEHOLDER_IMG;
-  return (
-    <div className="rs-tile">
-      <img src={src} alt={title ?? ""} loading="lazy" onError={() => setBroken(true)} />
-    </div>
-  );
 }
 
 function SearchIcon() {
@@ -77,7 +67,7 @@ function SparkIcon() {
 export default function App() {
   const [q, setQ] = useState("");
   const [submitted, setSubmitted] = useState("");
-  const [results, setResults] = useState<ProductSummary[]>([]);
+  const [results, setResults] = useState<ModelCard[]>([]);
   const [total, setTotal] = useState<number | null>(null);
   const [facets, setFacets] = useState<FacetsData | null>(null);
   const [detail, setDetail] = useState<ProductDetail | null>(null);
@@ -213,7 +203,12 @@ export default function App() {
     setChatStatus("");
     let asstOpen = false;   // ¿hay una burbuja del asistente abierta a la que ir añadiendo texto?
     try {
-      const view = { query: submitted, visible: results.slice(0, 12).map((r) => r.sku) };
+      const view = {
+        query: submitted,
+        visible: results.slice(0, 12)
+          .map((r) => r.variants[r.default]?.sku ?? r.variants[0]?.sku)
+          .filter(Boolean),
+      };
       for await (const ev of streamChat({ text, session_id: sessionId.current, view })) {
         if (ev.type === "text") {
           setChatStatus(null);
@@ -358,20 +353,8 @@ export default function App() {
           )}
 
           <div className="rs-grid">
-            {results.map((r) => (
-              <article key={r.sku} className="rs-card" onClick={() => openProduct(r.sku)}>
-                <Tile image={r.image} title={r.title} />
-                {r.collection && <p className="rs-coll">{r.collection}</p>}
-                <h3 className="rs-title">{r.title}</h3>
-                <div className="rs-meta">
-                  <div>Ref: {r.sku}</div>
-                  {r.dims && <div>{r.dims}</div>}
-                  {r.finish && <div>{r.finish}</div>}
-                </div>
-                {r.price_rrp != null && (
-                  <div className="rs-price">PVPR: <b>{price(r.price_rrp)} €</b></div>
-                )}
-              </article>
+            {results.map((c) => (
+              <ProductCard key={c.model} card={c} onOpen={openProduct} />
             ))}
           </div>
         </main>
@@ -408,6 +391,22 @@ export default function App() {
                   <div className="rs-price">PVPR: <b>{price(detail.price_rrp)} €</b></div>
                 )}
                 {detail.desc.marketing && <p className="rs-detail-desc">{detail.desc.marketing}</p>}
+                {detail.variants && detail.variants.length > 1 && (
+                  <div className="rs-swatches rs-swatches--detail">
+                    {detail.variants.map((vr) => (
+                      <button
+                        type="button"
+                        key={vr.sku}
+                        className={`rs-swatch${vr.sku === detail.sku ? " is-active" : ""}`}
+                        title={vr.finish ?? ""}
+                        aria-label={vr.finish ?? ""}
+                        onClick={() => openProduct(vr.sku)}
+                      >
+                        <img src={vr.image ?? PLACEHOLDER_IMG} alt={vr.finish ?? ""} loading="lazy" />
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 

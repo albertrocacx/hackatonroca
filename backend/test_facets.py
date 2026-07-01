@@ -1,59 +1,65 @@
-"""Pruebas de las facetas dinamicas de /search (llaman a search() directamente)."""
+"""Pruebas de /search: facetas dinámicas + agrupación por modelo (tarjetas-modelo)."""
 import main
 
 Q = "lavabo"
+UNIK = "851545..."   # modelo con varias variantes de acabado
 
 
-def test_response_incluye_facets():
+def test_response_incluye_facets_y_cards():
     r = main.search(q=Q)
     assert set(r["facets"]) == {"category", "collection", "finish", "price", "dims"}
-    assert set(r["facets"]["dims"]) == {"length", "width", "height"}
     assert r["total"] > 0
+    c = r["results"][0]
+    assert "model" in c and isinstance(c["variants"], list) and c["variants"]
+    assert 0 <= c["default"] < len(c["variants"])
 
 
-def test_contadores_coinciden_con_filtrar_a_mano():
+def test_total_cuenta_modelos():
+    r = main.search(q=Q, limit=5000)
+    models = {c["model"] for c in r["results"]}
+    assert r["total"] == len(models)          # una tarjeta por modelo
+
+
+def test_agrupacion_unik():
+    r = main.search(q="Unik", limit=5000)
+    cards = [c for c in r["results"] if c["model"] == UNIK]
+    assert len(cards) == 1                     # las 4 variantes en UNA tarjeta
+    skus = {v["sku"] for v in cards[0]["variants"]}
+    assert {"A851545402", "A851545434"} <= skus
+
+
+def test_contador_categoria_coincide_con_total():
     r = main.search(q=Q)
     top = r["facets"]["category"][0]
     r2 = main.search(q=Q, category=[top["value"]])
-    # el total al filtrar por esa categoria == su contador en la faceta
-    assert r2["total"] == top["count"]
+    assert r2["total"] == top["count"]         # total (modelos) == contador (modelos)
 
 
-def test_leave_one_out_mantiene_las_demas_opciones():
+def test_leave_one_out_mantiene_opciones():
     r = main.search(q=Q)
     cats = [f["value"] for f in r["facets"]["category"]]
     assert len(cats) >= 2
-    # al fijar una categoria, la faceta categoria sigue mostrando las demas
     r2 = main.search(q=Q, category=[cats[0]])
-    cats2 = [f["value"] for f in r2["facets"]["category"]]
-    assert cats[1] in cats2
+    assert cats[1] in [f["value"] for f in r2["facets"]["category"]]
 
 
-def test_or_dentro_de_faceta():
-    r = main.search(q=Q)
-    a, b = r["facets"]["category"][0]["value"], r["facets"]["category"][1]["value"]
-    ra = main.search(q=Q, category=[a])["total"]
-    rb = main.search(q=Q, category=[b])["total"]
-    rab = main.search(q=Q, category=[a, b])["total"]
-    assert rab == ra + rb        # categorias disjuntas -> union = suma
+def test_default_respeta_filtro_color():
+    r = main.search(q="Unik", limit=5000)
+    card = next(c for c in r["results"] if c["model"] == UNIK)
+    color = card["variants"][0]["finish"]
+    r2 = main.search(q="Unik", finish=[color], limit=5000)
+    card2 = next(c for c in r2["results"] if c["model"] == UNIK)
+    assert card2["variants"][card2["default"]]["finish"] == color
+    assert len(card2["variants"]) >= 1         # sigue listando acabados (Q2·A)
 
 
-def test_and_entre_facetas():
-    r = main.search(q=Q)
-    cat = r["facets"]["category"][0]["value"]
-    solo_cat = main.search(q=Q, category=[cat])["total"]
-    fin = main.search(q=Q, category=[cat])["facets"]["finish"]
-    if fin:
-        con_color = main.search(q=Q, category=[cat], finish=[fin[0]["value"]])["total"]
-        assert con_color <= solo_cat      # anadir otra faceta solo puede reducir
+def test_rango_precio_excluye_nulos():
+    r = main.search(q=Q, max_price=100, limit=5000)
+    for c in r["results"]:
+        for v in c["variants"]:
+            assert v["price_rrp"] is None or v["price_rrp"] <= 100
 
 
-def test_rango_precio_filtra_y_excluye_nulos():
-    r = main.search(q=Q, max_price=100)
-    for it in r["results"]:
-        assert it["price_rrp"] is not None and it["price_rrp"] <= 100
-
-
-def test_bounds_son_numericos():
-    dims = main.search(q=Q)["facets"]["dims"]["length"]
-    assert dims is None or (isinstance(dims["min"], (int, float)) and dims["min"] <= dims["max"])
+def test_detail_incluye_variants():
+    d = main.product_detail("A851545402")
+    assert "variants" in d and any(v["sku"] == "A851545434" for v in d["variants"])

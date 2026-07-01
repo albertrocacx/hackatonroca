@@ -12,9 +12,27 @@ export interface ProductSummary {
   dims: string | null;
 }
 
+// Variante (acabado) de un modelo, y tarjeta-modelo del grid
+export interface Variant {
+  sku: string;
+  finish: string | null;
+  image: string | null;
+  price_rrp: number | null;
+  dims: string | null;
+}
+export interface ModelCard {
+  model: string;
+  title: string | null;
+  collection: string | null;
+  category: string | null;
+  default: number;
+  variants: Variant[];
+}
+
 export interface ProductDetail extends ProductSummary {
   subcategory: string | null;
   desc: { marketing: string | null; extended: string | null };
+  variants: Variant[];
   relations: {
     compatible: ProductSummary[];
     optional: ProductSummary[];
@@ -68,7 +86,7 @@ export interface Facets {
 export interface SearchResponse {
   query: string;
   total: number;
-  results: ProductSummary[];
+  results: ModelCard[];
   facets: Facets;
 }
 
