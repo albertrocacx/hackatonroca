@@ -70,6 +70,63 @@ button { font-family: inherit; }
   border: 1px solid var(--ink);
   border-radius: 6px;
   padding: 12px 16px;
+  position: relative;
+}
+
+/* --- autocompletado --- */
+.rs-suggest {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  z-index: 20;
+}
+.rs-suggest-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bar);
+}
+.rs-chip {
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: #fff;
+  white-space: nowrap;
+}
+.rs-chip-finish { background: var(--ink); }
+.rs-chip-price { background: var(--taupe); }
+.rs-suggest-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 11px 16px;
+  font-size: 15px;
+  color: var(--ink);
+}
+.rs-suggest-item:hover { background: var(--tile); }
+.rs-suggest-term { flex: 1; }
+.rs-suggest-tags { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.rs-suggest-type { font-size: 12px; color: var(--muted); }
+.rs-suggest-sem {
+  font-size: 11px;
+  color: var(--taupe);
+  border: 1px solid var(--taupe);
+  border-radius: 999px;
+  padding: 1px 7px;
 }
 .rs-searchbox svg { flex: 0 0 auto; }
 .rs-searchbox input {

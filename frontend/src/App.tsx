@@ -1,6 +1,15 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
 import "./styles.css";
-import { search, getProduct, type ProductSummary, type ProductDetail } from "./api";
+import {
+  search, suggest, getProduct,
+  type ProductSummary, type ProductDetail, type Suggestion, type Filter,
+} from "./api";
+
+const TYPE_LABEL: Record<string, string> = {
+  category: "Categoría",
+  subcategory: "Subcategoría",
+  collection: "Colección",
+};
 
 const REL_LABELS: Record<string, string> = {
   compatible: "Compatible con",
@@ -44,18 +53,56 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function doSearch(e: FormEvent) {
-    e.preventDefault();
-    if (!q.trim()) return;
-    setLoading(true); setError(null); setDetail(null);
+  // --- autocompletado ---
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [autoFilters, setAutoFilters] = useState<Filter[]>([]);
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const term = q.trim();
+    if (!term) { setSuggestions([]); setAutoFilters([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        const r = await suggest(q);
+        setSuggestions(r.suggestions);
+        setAutoFilters(r.filters);
+        setOpen(true);
+      } catch { /* silencioso: el autocompletado es best-effort */ }
+    }, 180);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
+  async function runSearch(text: string, concept: Suggestion | undefined, filters: Filter[]) {
+    setLoading(true); setError(null); setDetail(null); setOpen(false);
+    const label = [concept?.term ?? text, ...filters.map((f) => f.label)].filter(Boolean).join(" · ");
     try {
-      const r = await search(q);
-      setResults(r.results); setTotal(r.total); setSubmitted(q);
+      const r = await search(concept ? "" : text, { concept, filters });
+      setResults(r.results); setTotal(r.total); setSubmitted(label);
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
+  }
+
+  function doSearch(e: FormEvent) {
+    e.preventDefault();
+    if (!q.trim()) return;
+    // Enter sin elegir: busca la frase de intención como texto libre + filtros
+    runSearch(q, undefined, autoFilters);
+  }
+
+  function pickSuggestion(s: Suggestion) {
+    runSearch(q, s, autoFilters);
   }
 
   async function openProduct(sku: string) {
@@ -73,22 +120,51 @@ export default function App() {
       <header className="rs-header">
         <a className="rs-logo" href="#" onClick={(e) => e.preventDefault()}>Roca</a>
         <form className="rs-searchform" onSubmit={doSearch}>
-          <div className="rs-searchbox">
+          <div className="rs-searchbox" ref={boxRef}>
             <SearchIcon />
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              onFocus={() => (suggestions.length || autoFilters.length) && setOpen(true)}
               placeholder="Introduce tu búsqueda"
               aria-label="Buscar"
               autoFocus
             />
             {q && (
-              <button type="button" className="rs-clear" aria-label="Borrar" onClick={() => setQ("")}>
+              <button type="button" className="rs-clear" aria-label="Borrar" onClick={() => { setQ(""); setOpen(false); }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" stroke="#1a1a1a" strokeWidth="1.6">
                   <line x1="5" y1="5" x2="19" y2="19" strokeLinecap="round" />
                   <line x1="19" y1="5" x2="5" y2="19" strokeLinecap="round" />
                 </svg>
               </button>
+            )}
+
+            {open && (suggestions.length > 0 || autoFilters.length > 0) && (
+              <div className="rs-suggest">
+                {autoFilters.length > 0 && (
+                  <div className="rs-suggest-filters">
+                    {autoFilters.map((f, i) => (
+                      <span key={i} className={`rs-chip rs-chip-${f.type}`}>
+                        {f.type === "finish" ? "Acabado" : "Precio"}: {f.label}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {suggestions.map((s, i) => (
+                  <button
+                    type="button"
+                    key={`${s.term}-${i}`}
+                    className="rs-suggest-item"
+                    onClick={() => pickSuggestion(s)}
+                  >
+                    <span className="rs-suggest-term">{s.term}</span>
+                    <span className="rs-suggest-tags">
+                      <span className="rs-suggest-type">{TYPE_LABEL[s.type]}</span>
+                      {s.source === "semantic" && <span className="rs-suggest-sem">similar</span>}
+                    </span>
+                  </button>
+                ))}
+              </div>
             )}
           </div>
         </form>
