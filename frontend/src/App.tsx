@@ -59,10 +59,12 @@ export default function App() {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);   // fila resaltada por teclado
   const boxRef = useRef<HTMLDivElement>(null);
+  const skipSuggest = useRef(false);          // evita reabrir el desplegable al fijar el texto elegido
 
   useEffect(() => {
     const term = q.trim();
     if (!term) { setSuggestions([]); setAutoFilters([]); setActive(-1); return; }
+    if (skipSuggest.current) { skipSuggest.current = false; return; }
     const t = setTimeout(async () => {
       try {
         const r = await suggest(q);
@@ -120,7 +122,9 @@ export default function App() {
   }
 
   function pickSuggestion(s: Suggestion) {
-    runSearch(q, s, autoFilters);
+    skipSuggest.current = true;
+    setQ(s.term);                 // refleja en el campo la opción elegida
+    runSearch(s.term, s, autoFilters);
   }
 
   async function openProduct(sku: string) {
