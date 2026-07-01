@@ -23,16 +23,16 @@ function price(p: number | null) {
   return p.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function Tile({ image, title, label }: { image: string | null; title: string | null; label: string | null }) {
+const PLACEHOLDER_IMG = "https://www.roca.es/o/roca-restyle-theme/images/product-thumbnail.jpg";
+
+function Tile({ image, title }: { image: string | null; title: string | null }) {
   const [broken, setBroken] = useState(false);
-  if (image && !broken) {
-    return (
-      <div className="rs-tile">
-        <img src={image} alt={title ?? ""} loading="lazy" onError={() => setBroken(true)} />
-      </div>
-    );
-  }
-  return <div className="rs-tile"><span className="rs-tile-ph">{label ?? "Roca"}</span></div>;
+  const src = image && !broken ? image : PLACEHOLDER_IMG;
+  return (
+    <div className="rs-tile">
+      <img src={src} alt={title ?? ""} loading="lazy" onError={() => setBroken(true)} />
+    </div>
+  );
 }
 
 function SearchIcon() {
@@ -209,7 +209,7 @@ export default function App() {
         <div className="rs-grid">
           {results.map((r) => (
             <article key={r.sku} className="rs-card" onClick={() => openProduct(r.sku)}>
-              <Tile image={r.image} title={r.title} label={r.category} />
+              <Tile image={r.image} title={r.title} />
               {r.collection && <p className="rs-coll">{r.collection}</p>}
               <h3 className="rs-title">{r.title}</h3>
               <div className="rs-meta">
@@ -230,7 +230,7 @@ export default function App() {
           <div className="rs-panel" onClick={(e) => e.stopPropagation()}>
             <button className="rs-close" onClick={() => setDetail(null)} aria-label="Cerrar">×</button>
             <div className="rs-detail-top">
-              <Tile image={detail.image} title={detail.title} label={detail.category} />
+              <Tile image={detail.image} title={detail.title} />
               <div>
                 {detail.collection && <p className="rs-coll">{detail.collection}</p>}
                 <h2 className="rs-detail-title">{detail.title}</h2>
