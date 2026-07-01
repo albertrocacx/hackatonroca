@@ -231,8 +231,21 @@ export default function App() {
           setTotal(ev.data.total);
           setFacets(ev.data.facets);
           setSubmitted(q2);
-          // el agente fija el SCOPE de texto; el sidebar de facetas parte de cero sobre él
-          setBaseText(q2); setSubcat(null); setSel(EMPTY_SELECTED);
+          // el agente fija el SCOPE (texto + subcategoría) y refleja SUS filtros en el sidebar,
+          // para que checkboxes y sliders muestren lo que Claude buscó (p. ej. precio máx 150).
+          const f = ev.filters ?? {};
+          setBaseText(q2);
+          setSubcat(f.subcategory ?? null);
+          setSel({
+            ...EMPTY_SELECTED,
+            categories: f.category ? [f.category] : [],
+            collections: f.collection ? [f.collection] : [],
+            finishes: f.finish ?? [],
+            price: { min: f.min_price ?? null, max: f.max_price ?? null },
+            length: { min: f.min_length ?? null, max: f.max_length ?? null },
+            width: { min: f.min_width ?? null, max: f.max_width ?? null },
+            height: { min: f.min_height ?? null, max: f.max_height ?? null },
+          });
           setMessages((m) => [...m, { role: "note", text: "Resultados actualizados ←" }]);
         } else if (ev.type === "done") {
           if (ev.session_id) sessionId.current = ev.session_id;
@@ -326,11 +339,12 @@ export default function App() {
               </div>
             )}
           </div>
+          <button type="submit" className="rs-search-btn">Buscar</button>
+          <button type="button" className="rs-ai-btn" onClick={openAI} title="Buscar y conversar con IA">
+            <SparkIcon />
+            <span>Búsqueda IA</span>
+          </button>
         </form>
-        <button type="button" className="rs-ai-btn" onClick={openAI} title="Buscar y conversar con IA">
-          <SparkIcon />
-          <span>Búsqueda IA</span>
-        </button>
       </header>
 
       <div className="rs-layout">

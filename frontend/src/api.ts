@@ -152,11 +152,26 @@ export async function getHealth(): Promise<{ chat_ready: boolean }> {
 export interface ChatView { query?: string; visible?: string[]; }
 export interface ChatRequest { text: string; session_id?: string | null; view?: ChatView; }
 
+export interface ChatFilters {
+  category?: string;
+  collection?: string;
+  subcategory?: string;
+  finish?: string[];
+  min_price?: number;
+  max_price?: number;
+  min_length?: number;
+  max_length?: number;
+  min_width?: number;
+  max_width?: number;
+  min_height?: number;
+  max_height?: number;
+}
+
 export type ChatEvent =
   | { type: "text"; text: string }
   | { type: "tool"; name: string }
   | { type: "tool_error"; name: string; error: string }
-  | { type: "grid"; query: string | null; data: SearchResponse }
+  | { type: "grid"; query: string | null; filters?: ChatFilters; data: SearchResponse }
   | { type: "done"; session_id?: string }
   | { type: "error"; message: string };
 
