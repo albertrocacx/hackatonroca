@@ -56,10 +56,11 @@ function CheckList({
 
 const fmt = (n: number) => Math.round(n).toLocaleString("es-ES");
 
-function RangeFilter({
-  title, bounds, value, onChange, unit,
+/** Slider de rango con doble mango sobre una pista con relleno. */
+function RangeRow({
+  label, bounds, value, onChange, unit,
 }: {
-  title: string;
+  label: string;
   bounds: Range | null;
   value: RangeSel;
   onChange: (r: RangeSel) => void;
@@ -69,26 +70,48 @@ function RangeFilter({
   const single = bounds.min >= bounds.max;
   const lo = value.min ?? bounds.min;
   const hi = value.max ?? bounds.max;
+  const span = bounds.max - bounds.min || 1;
+  const loPct = ((lo - bounds.min) / span) * 100;
+  const hiPct = ((hi - bounds.min) / span) * 100;
+  const suffix = unit ? ` ${unit}` : "";
+
   return (
-    <Section title={title}>
-      <div className="fac-range">
-        <div className="fac-range-vals">
-          {fmt(lo)} – {fmt(hi)}{unit ? ` ${unit}` : ""}
+    <div className="fac-range">
+      <div className="fac-range-label">
+        <span className="fac-range-name">{label}</span>
+        <span className="fac-range-cur">{fmt(lo)} – {fmt(hi)}{suffix}</span>
+      </div>
+
+      <div className={`fac-slider${single ? " is-single" : ""}`}>
+        <div className="fac-slider-track">
+          <div
+            className="fac-slider-fill"
+            style={{ left: `${loPct}%`, right: `${100 - hiPct}%` }}
+          />
         </div>
         {!single && (
-          <div className="fac-sliders">
+          <>
             <input
-              type="range" min={bounds.min} max={bounds.max} value={lo}
+              type="range" className="fac-slider-input"
+              min={bounds.min} max={bounds.max} value={lo}
+              aria-label={`${label} mínimo`}
               onChange={(e) => onChange({ min: Math.min(+e.target.value, hi), max: value.max })}
             />
             <input
-              type="range" min={bounds.min} max={bounds.max} value={hi}
+              type="range" className="fac-slider-input"
+              min={bounds.min} max={bounds.max} value={hi}
+              aria-label={`${label} máximo`}
               onChange={(e) => onChange({ min: value.min, max: Math.max(+e.target.value, lo) })}
             />
-          </div>
+          </>
         )}
       </div>
-    </Section>
+
+      <div className="fac-slider-bounds">
+        <span>{fmt(bounds.min)}{suffix}</span>
+        <span>{fmt(bounds.max)}{suffix}</span>
+      </div>
+    </div>
   );
 }
 
@@ -120,14 +143,22 @@ export default function Facets({
         selectedVals={selected.categories} onToggle={toggle("categories")} />
       <CheckList title="Colecciones" items={facets.collection}
         selectedVals={selected.collections} onToggle={toggle("collections")} />
-      <RangeFilter title="Precio" bounds={facets.price}
-        value={selected.price} onChange={setRange("price")} unit="€" />
-      <RangeFilter title="Largo (mm)" bounds={facets.dims.length}
-        value={selected.length} onChange={setRange("length")} />
-      <RangeFilter title="Ancho (mm)" bounds={facets.dims.width}
-        value={selected.width} onChange={setRange("width")} />
-      <RangeFilter title="Alto (mm)" bounds={facets.dims.height}
-        value={selected.height} onChange={setRange("height")} />
+      {facets.price && (
+        <Section title="Precio">
+          <RangeRow label="Precio" bounds={facets.price}
+            value={selected.price} onChange={setRange("price")} unit="€" />
+        </Section>
+      )}
+      {(facets.dims.length || facets.dims.width || facets.dims.height) && (
+        <Section title="Dimensiones">
+          <RangeRow label="Largo (mm)" bounds={facets.dims.length}
+            value={selected.length} onChange={setRange("length")} />
+          <RangeRow label="Ancho (mm)" bounds={facets.dims.width}
+            value={selected.width} onChange={setRange("width")} />
+          <RangeRow label="Alto (mm)" bounds={facets.dims.height}
+            value={selected.height} onChange={setRange("height")} />
+        </Section>
+      )}
       <CheckList title="Colores" items={facets.finish}
         selectedVals={selected.finishes} onToggle={toggle("finishes")} />
     </div>
