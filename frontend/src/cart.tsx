@@ -98,7 +98,12 @@ function eur(n: number) {
   return n.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function CartDrawer() {
+interface CartDrawerProps {
+  /** Abre "Diseña tu baño" con los productos de la cesta (el drawer se cierra antes). */
+  onDesign?: () => void;
+}
+
+export function CartDrawer({ onDesign }: CartDrawerProps) {
   const { lines, count, total, open, setQty, remove, clear, setOpen } = useCart();
   const [done, setDone] = useState(false);
 
@@ -175,6 +180,20 @@ export function CartDrawer() {
               <button className="rs-cart-checkout" onClick={checkout}>
                 Tramitar pedido
               </button>
+              {onDesign && (
+                <button
+                  className="rs-cart-design"
+                  title="Visualiza los productos de tu cesta en un baño generado por IA"
+                  onClick={() => { setOpen(false); onDesign(); }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <path d="M21 15l-5-5L5 21" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Diseña tu baño con estos productos
+                </button>
+              )}
               <button className="rs-cart-clear" onClick={clear}>Vaciar cesta</button>
             </div>
           </>

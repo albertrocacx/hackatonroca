@@ -691,6 +691,12 @@ button { font-family: inherit; }
   font-family: inherit; font-size: 15px; padding: 14px; border-radius: 6px; cursor: pointer;
 }
 .rs-cart-checkout:hover { background: #000; }
+.rs-cart-design {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin-top: 10px; border: 1px solid var(--ink); background: none; color: var(--ink);
+  font-family: inherit; font-size: 14px; padding: 12px; border-radius: 6px; cursor: pointer;
+}
+.rs-cart-design:hover { background: var(--tile); }
 .rs-cart-clear {
   width: 100%; border: none; background: none; color: var(--muted);
   font-family: inherit; font-size: 13px; padding: 10px 0 0; cursor: pointer; text-decoration: underline;

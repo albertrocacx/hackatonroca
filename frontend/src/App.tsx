@@ -875,7 +875,7 @@ export default function App() {
         <Design ready={designReady} onClose={() => setDesignOpen(false)} />
       )}
 
-      <CartDrawer />
+      <CartDrawer onDesign={() => setDesignOpen(true)} />
 
       {localItem && (
         <LocalSuppliers item={localItem} onClose={() => setLocalItem(null)} />
