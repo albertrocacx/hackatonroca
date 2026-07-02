@@ -50,6 +50,9 @@ backend/data/*
 !backend/data/suppliers.json
 !backend/data/concept_vectors.npy
 
+# Ficheros de prueba locales (no se suben al repo)
+testfiles/
+
 # Sistema / editores
 .DS_Store
 Thumbs.db
