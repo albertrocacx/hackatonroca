@@ -7,3 +7,5 @@ openai>=1.40               # cliente Azure OpenAI (embeddings) para /search sem�
 azure-search-documents>=11.5  # búsqueda vectorial/híbrida en Azure AI Search
 azure-core>=1.30
 python-dotenv>=1.0         # carga backend/.env (credenciales Azure fuera del código)
+azure-storage-blob>=12.19  # OCR: descarga PDFs y sube .md a Blob Storage (ocr_pdf_blob.py)
+pymupdf>=1.24              # OCR: renderiza cada página del PDF a imagen (ocr_pdf_blob.py)

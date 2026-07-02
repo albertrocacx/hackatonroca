@@ -40,6 +40,16 @@ service-account*.json
 *.xlsb
 *.csv
 
+# Datos locales: ignora todo lo generado en backend/data (OCR, selección, etc.)
+# EXCEPTO los ficheros que la app carga en runtime.
+backend/data/*
+!backend/data/products.json
+!backend/data/relations.json
+!backend/data/concepts.json
+!backend/data/images.json
+!backend/data/suppliers.json
+!backend/data/concept_vectors.npy
+
 # Sistema / editores
 .DS_Store
 Thumbs.db

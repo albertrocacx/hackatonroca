@@ -12,11 +12,14 @@ interface Props {
   onNew: () => void;
 }
 
-// markdown mínimo y seguro: escapa HTML, luego **negrita** y `código`.
+// markdown mínimo y seguro: escapa HTML, luego enlaces, **negrita** y `código`.
 function mdLite(raw: string) {
   const esc = raw
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return esc
+    // enlaces Markdown [texto](http(s)://…) -> <a> clicable (solo http/https, pestaña nueva)
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+             '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
 }

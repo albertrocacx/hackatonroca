@@ -50,7 +50,7 @@ MODEL_TOP = 10    # productos que se pasan al modelo (resumir, no listar todo)
 # (hoy o en el futuro) queda disponible para el agente sin tocar este archivo.
 _search_fn = None
 _MCP = None
-TOOLS = ["mcp__roca__search_catalog"]
+TOOLS = ["mcp__roca__search_catalog", "mcp__roca__search_manual"]
 SEARCH_PARAMS: set[str] = set()   # todos los params de search()
 LIST_PARAMS: set[str] = set()     # los que son listas (deben enviarse como lista)
 INTERNAL_PARAMS = {"q", "limit", "include_spare"}  # no son filtros de usuario
@@ -105,6 +105,61 @@ def _brief_from_card(c: dict) -> dict:
             "finish": v.get("finish"), "price_rrp": v.get("price_rrp")}
 
 
+# --- Tool de documentación: preguntas sobre el manual/guía de UN producto (SKU) concreto ---
+# Recupera del índice de manuales (search_ocr) filtrando por sku + doctype, y devuelve
+# fragmentos + pdf_url (firmada con SAS) para que Claude cite un enlace clicable.
+MANUAL_TOP = 6
+DOCTYPE_MAP = {
+    "usermanual": "UserManual", "user_manual": "UserManual", "manual_usuario": "UserManual",
+    "manual_de_usuario": "UserManual", "usuario": "UserManual", "user": "UserManual",
+    "installationmanual": "InstallationManual", "installation_manual": "InstallationManual",
+    "installation_guide": "InstallationManual", "guia_instalacion": "InstallationManual",
+    "guía_instalación": "InstallationManual", "instalacion": "InstallationManual",
+    "installation": "InstallationManual",
+    "technicalfactsheet": "TechnicalFactSheet", "technical_fact_sheet": "TechnicalFactSheet",
+    "ficha_tecnica": "TechnicalFactSheet", "ficha": "TechnicalFactSheet",
+}
+
+_MANUAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "sku": {"type": "string",
+                "description": "SKU/código del producto (carpeta del manual), p.ej. '8S6090000'."},
+        "doctype": {"type": "string",
+                    "enum": ["UserManual", "InstallationManual", "TechnicalFactSheet"],
+                    "description": "Documento a consultar: UserManual (uso/mantenimiento), "
+                                   "InstallationManual (instalación/montaje) o TechnicalFactSheet (ficha técnica)."},
+        "question": {"type": "string", "description": "La pregunta del usuario en lenguaje natural."},
+    },
+    "required": ["sku", "doctype", "question"],
+}
+
+
+def search_manual_impl(sku: str, doctype: str, question: str, top: int = MANUAL_TOP) -> dict:
+    """Búsqueda en el índice de manuales por sku+doctype. Devuelve un payload citable
+    (con pdf_url firmada). Aislada para poder testearla sin el LLM."""
+    import search_ocr  # búsqueda vectorial con filtros de metadatos (índice de manuales)
+    dt = DOCTYPE_MAP.get((doctype or "").strip().lower().replace(" ", "_"), (doctype or "").strip())
+    hits = search_ocr.search_ocr((question or "").strip(), sku=(sku or "").strip(),
+                                 doctype=dt or None, top=top)
+    results = [{"sku": h.get("sku"), "doctype": h.get("doctype"), "pdf_url": h.get("pdf_url"),
+                "text": (h.get("text") or "")[:1200]} for h in hits]
+    return {"sku": (sku or "").strip(), "doctype": dt, "count": len(results), "results": results}
+
+
+@tool("search_manual",
+      "Responde preguntas sobre la documentación de UN producto concreto (por SKU): manual de "
+      "usuario, guía de instalación o ficha técnica. Devuelve fragmentos y la URL del PDF para "
+      "citarla. Requiere sku + doctype + question.",
+      _MANUAL_SCHEMA)
+async def _search_manual_tool(args):
+    try:
+        payload = search_manual_impl(args.get("sku", ""), args.get("doctype", ""), args.get("question", ""))
+    except Exception as e:  # noqa: BLE001
+        payload = {"error": str(e)}
+    return {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]}
+
+
 def configure(search_fn):
     """main.py inyecta su `search`. Construimos aquí (con la firma ya conocida) el schema
     dinámico de la tool, la tool y el servidor MCP en proceso."""
@@ -132,7 +187,7 @@ def configure(search_fn):
         payload = {"total": data.get("total", 0), "results": brief}
         return {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]}
 
-    _MCP = create_sdk_mcp_server("roca", tools=[_search_catalog_tool])
+    _MCP = create_sdk_mcp_server("roca", tools=[_search_catalog_tool, _search_manual_tool])
 
 
 def _search_kwargs(a: dict, limit: int) -> dict:
@@ -158,10 +213,12 @@ SYSTEM = """Eres el asistente del catálogo Roca para el mercado español: un ex
 showroom que ayuda a encontrar productos de baño y cocina (lavabos, inodoros, bidés, \
 platos de ducha, bañeras, grifería, mobiliario, accesorios).
 
-Herramienta (úsala, nunca inventes productos ni precios):
+Herramientas (úsalas, nunca inventes productos, precios ni instrucciones):
 - search_catalog: buscar productos. Los resultados se enseñan TAMBIÉN al usuario en una \
 parrilla automáticamente, así que no listes todos: resume y señala la parrilla ("Aquí \
 tienes algunas opciones a la izquierda").
+- search_manual: responder preguntas sobre la documentación de UN producto concreto (por \
+SKU): manual de usuario, guía de instalación o ficha técnica.
 
 REGLA DE BÚSQUEDA (impórtate mucho):
 - Haz UNA sola llamada a search_catalog por turno, con la consulta MÁS SIMPLE y directa \
@@ -179,6 +236,19 @@ de 200 €" -> `query="lavabos blancos", max_price=200`; "inodoros de alto máx 
 `query="inodoros", max_height=1000`.
 - Solo haz más de una búsqueda si el usuario pide algo que de verdad lo exige (p. ej. \
 comparar dos categorías distintas), y dilo.
+
+DOCUMENTACIÓN DE UN PRODUCTO (search_manual):
+- Úsala cuando el usuario pregunte cómo usar, instalar, montar o mantener un producto \
+identificado por su SKU (o uno visible en [contexto]).
+- Necesitas DOS datos para llamarla: `sku` y `doctype`. `doctype` es UserManual (uso, \
+limpieza, mantenimiento, garantía) o InstallationManual (instalación, montaje, medidas, \
+fijación, conexiones); usa TechnicalFactSheet solo si piden la ficha técnica.
+- Si NO tienes claro si la pregunta es del manual de USUARIO o de la guía de INSTALACIÓN, \
+PREGÚNTASELO al usuario antes de llamar a la tool (no adivines). Si falta el SKU, pídelo \
+(o confírmalo con el de [contexto] si es evidente).
+- Con los fragmentos devueltos: responde SOLO con esa información y CITA la fuente como \
+ENLACE MARKDOWN CLICABLE al `pdf_url`, p. ej. "[Guía de instalación · SKU 8S6090000](https://…)". \
+Si los fragmentos no contienen la respuesta, dilo claramente (no inventes).
 
 Comportamiento:
 - Responde en el idioma del usuario (español por defecto). Sé concreto y breve.
