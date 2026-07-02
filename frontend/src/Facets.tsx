@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { Facets as FacetsData, FacetValue, Range, RangeSel, Selected } from "./api";
+import type { ColorGroup, Facets as FacetsData, FacetValue, Range, RangeSel, Selected } from "./api";
 
 const N_SHOWN = 8;
 
@@ -130,6 +130,30 @@ export default function Facets({
   const setRange = (key: "price" | "length" | "width" | "height") => (r: RangeSel) =>
     onChange({ ...selected, [key]: r });
 
+  // Colores principales: cada grupo agrega sus acabados compuestos (Negro -> Negro mate,
+  // Porcelana negra...). Marcado SOLO si el grupo entero está seleccionado: un acabado
+  // compartido ('Negro/Blanco' está en Negro Y en Blanco) no debe marcar el otro color.
+  // Al desmarcar se conservan los acabados compartidos con otros colores aún marcados.
+  const colorOn = (g: ColorGroup) =>
+    g.finishes.length > 0 && g.finishes.every((f) => selected.finishes.includes(f));
+  const toggleColor = (v: string) => {
+    const g = (facets.color ?? []).find((x) => x.value === v);
+    if (!g) return;
+    let next: string[];
+    if (colorOn(g)) {
+      const keep = new Set(
+        (facets.color ?? [])
+          .filter((o) => o.value !== v && colorOn(o))
+          .flatMap((o) => o.finishes)
+      );
+      next = selected.finishes.filter((f) => !g.finishes.includes(f) || keep.has(f));
+    } else {
+      next = [...selected.finishes, ...g.finishes.filter((f) => !selected.finishes.includes(f))];
+    }
+    onChange({ ...selected, finishes: next });
+  };
+  const colorItems = facets.color ?? [];
+
   const empty =
     facets.category.length === 0 &&
     facets.collection.length === 0 &&
@@ -159,8 +183,9 @@ export default function Facets({
             value={selected.height} onChange={setRange("height")} />
         </Section>
       )}
-      <CheckList title="Colores" items={facets.finish}
-        selectedVals={selected.finishes} onToggle={toggle("finishes")} />
+      <CheckList title="Colores" items={colorItems}
+        selectedVals={colorItems.filter(colorOn).map((g) => g.value)}
+        onToggle={toggleColor} />
     </div>
   );
 }

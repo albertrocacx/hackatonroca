@@ -13,11 +13,15 @@ from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-# chat IA opcional: si el SDK no está instalado, la app sigue funcionando (solo búsqueda)
+# chat IA opcional: si el SDK no está instalado, la app sigue funcionando (solo búsqueda).
+# Guardamos la causa REAL del fallo (no siempre es "falta anthropic": puede ser una versión
+# sin AsyncAnthropicFoundry, un error de sintaxis, etc.) para reportarla con precisión.
 try:
     import chat
-except Exception:  # noqa: BLE001
+    _chat_import_error = None
+except Exception as e:  # noqa: BLE001
     chat = None
+    _chat_import_error = e
 
 # búsqueda semántica (Azure AI Search). Si el módulo/SDK no carga, /search cae al
 # buscador de texto por substring (fallback) para que la app nunca se rompa.
@@ -113,6 +117,26 @@ for p in PRODUCTS:
     if p.get("model"):
         BY_MODEL[p["model"]].append(p)
 
+# El índice de Azure titula el modelo COMPACTADO (sin los '..' comodín): '857853' para el
+# modelo '857853...' del catálogo. Sin este mapa se perdían familias enteras (~105/120
+# resultados de mobiliario descartados por "no existir" en products.json).
+MODEL_COMPACT = {}                    # model sin puntos -> model canónico del catálogo
+for m in BY_MODEL:
+    MODEL_COMPACT.setdefault(m.replace(".", ""), m)
+
+
+def resolve_azure_models(scores: dict) -> tuple[dict, list]:
+    """Traduce los modelos que devuelve Azure a los del catálogo (resolviendo el
+    compactado de comodines). Devuelve ({model_catalogo -> score}, [sin_match])."""
+    out, missing = {}, []
+    for m, s in scores.items():
+        cm = m if m in BY_MODEL else MODEL_COMPACT.get(m.replace(".", ""))
+        if cm is None:
+            missing.append(m)
+        elif s > out.get(cm, -1.0):
+            out[cm] = s
+    return out, missing
+
 def search_blob(p):
     parts = [p.get("title"), p.get("category"), p.get("subcategory"),
              p.get("collection"), p.get("finish"), p.get("sku"),
@@ -120,7 +144,95 @@ def search_blob(p):
              (p.get("desc") or {}).get("extended")]
     return " ".join(x for x in parts if x).lower()
 
-SEARCH_INDEX = {p["sku"]: search_blob(p) for p in PRODUCTS}
+# blobs normalizados (minúsculas y sin acentos): los usan el fallback substring y la
+# verificación de atributos ("antideslizante"); los tokens de consulta se normalizan igual.
+SEARCH_INDEX = {p["sku"]: _norm(search_blob(p)) for p in PRODUCTS}
+
+# --- Colores principales: agrupan los acabados compuestos del catálogo -----------------
+# 'Negro mate', 'Porcelana negra', 'Mármol negro Marquina' caen bajo 'Negro'. stems =
+# subcadenas del nombre normalizado; extra = valores que no contienen la palabra. Un
+# acabado puede caer en varios colores ('Negro/Blanco', 'Oro rosado'); los que no casan
+# con ninguno caen en 'Otros'. La faceta `color` de /search se construye con esto.
+MAIN_COLORS = [
+    ("Blanco",   ["blanc", "white"], ["Edelweiss", "Pergamon", "Jazmín", "Magnolia", "Perla"]),
+    ("Negro",    ["negr", "black"], ["Ébano", "Onix", "Onix/Blanco"]),
+    ("Gris",     ["gris", "grey", "graphit", "grafito", "antracita"],
+                 ["Cemento", "Hormigón", "Pizarra"]),
+    ("Beige",    ["beige", "cream", "arena"], []),
+    ("Madera",   ["roble", "fresno", "nogal", "abedul", "aliso", "cedro", "cerezo", "olmo",
+                  "madera", "teka", "wenge", "decapado"], []),
+    ("Marrón",   ["moka", "cafe", "nogal", "wenge"], []),
+    ("Rojo",     ["roj", "red", "terracota"], []),
+    ("Azul",     ["azul", "blue"], []),
+    ("Verde",    ["verde", "green"], []),
+    ("Amarillo", ["amarill", "yellow"], []),
+    ("Rosa",     ["rosa", "pink"], []),
+    ("Dorado",   ["oro", "dorad", "gold"], []),
+    ("Plateado", ["plata", "silver", "niquel", "nickel"],
+                 ["Acero inoxidable", "Acero inoxidable pulido", "Acabado acero inoxidable"]),
+    ("Cromado",  ["cromad", "cromo", "chrome"], []),
+    ("Cobre",    ["cobre", "copper"], []),
+    ("Transparente", ["transparente"], []),
+]
+
+
+def _main_colors_of(finish_seg: str) -> list[str]:
+    n = _norm(finish_seg)
+    cols = [name for name, stems, extra in MAIN_COLORS
+            if any(s in n for s in stems) or finish_seg in extra]
+    return cols or ["Otros"]
+
+
+def _color_stem(w: str) -> str:
+    """Raíz sin plural/género ('negros' -> 'negr'), como la de azure_search (módulo opcional)."""
+    base = re.sub(r"(?:os|as|es)$", "", w)
+    if len(base) < 3:
+        base = w
+    stem = base[:-1] if base[-1:] in ("o", "a") else base
+    return stem if len(stem) >= 3 else base
+
+
+def _colors_of_term(term: str) -> list[str]:
+    """'negros' -> ['Negro']: colores principales que nombra un término de UNA palabra.
+    Los compuestos ('negro mate') devuelven [] para conservar la precisión del filtro."""
+    tn = _norm(str(term))
+    if not tn or " " in tn:
+        return []
+    ts = _color_stem(tn)
+    return [name for name, stems, _extra in MAIN_COLORS
+            if ts == _color_stem(_norm(name)) or any(s in tn for s in stems)]
+
+
+# acabado del catálogo -> colores principales (precalculado sobre todos los segmentos)
+FINISH_COLOR = {}
+for p in PRODUCTS:
+    for seg in str(p.get("finish") or "").split("|"):
+        seg = seg.strip()
+        if seg and seg not in FINISH_COLOR:
+            FINISH_COLOR[seg] = _main_colors_of(seg)
+
+# color principal -> TODOS sus acabados del catálogo. El sidebar marca/desmarca el grupo
+# COMPLETO (no solo lo presente en el scope): así desmarcar un color nunca deja acabados
+# seleccionados "invisibles" (p. ej. los 17 que aplica el auto-filtro de "negros").
+COLOR_FINISHES = defaultdict(list)
+for seg, cols in sorted(FINISH_COLOR.items()):
+    for c in cols:
+        COLOR_FINISHES[c].append(seg)
+
+# vocabulario real del catálogo -> intérprete LLM de consultas (azure_search.analyze_query):
+# los filtros que devuelva serán SIEMPRE valores existentes, listos para el sidebar.
+def _vocab_of(field):
+    vals = set()
+    for p in PRODUCTS:
+        for seg in str(p.get(field) or "").split("|"):
+            if seg.strip():
+                vals.add(seg.strip())
+    return sorted(vals)
+
+if azure_search is not None:
+    azure_search.set_vocab(finishes=CONCEPTS["finishes"],
+                           categories=_vocab_of("category_base"),
+                           collections=_vocab_of("collection"))
 
 def price_type_of(p):
     pt = p.get("price_type") or p.get("PriceType")
@@ -161,6 +273,9 @@ print(f"[startup] azure_search={'ok' if azure_search else 'NO'} "
       f"chat={'ok' if chat else 'NO'} chat_key={'si' if (chat and chat.API_KEY) else 'no'} "
       f"design={'ok' if (design and design.READY) else 'NO'} "
       f"semantic={'on' if ENABLE_SEMANTIC else 'off'} AZURE_K={AZURE_K}", flush=True)
+if _chat_import_error is not None:
+    print(f"[startup] chat NO cargó -> {_chat_import_error!r} "
+          f"(instala backend/requirements.txt: pip install -r requirements.txt)", flush=True)
 
 @app.get("/health")
 def health():
@@ -369,8 +484,32 @@ def _agg_models(products, field):
                   key=lambda x: -x["count"])
 
 
+def _agg_colors(products):
+    """Faceta de colores PRINCIPALES: cuenta modelos del scope por color; cada grupo
+    lleva TODOS los acabados del color en el catálogo (COLOR_FINISHES), para que el
+    frontend filtre marcando el color ('Negro' -> Negro, Negro mate, Porcelana negra...)."""
+    models = defaultdict(set)     # color -> modelos distintos en el scope
+    for p in products:
+        val = p.get("finish")
+        if not val:
+            continue
+        for seg in str(val).split("|"):
+            seg = seg.strip()
+            if not seg:
+                continue
+            for c in FINISH_COLOR.get(seg) or _main_colors_of(seg):
+                models[c].add(p.get("model"))
+    return sorted(({"value": c, "count": len(ms), "finishes": COLOR_FINISHES[c]}
+                   for c, ms in models.items()), key=lambda x: -x["count"])
+
+
+# órdenes de la parrilla que acepta /search (por defecto, relevancia del motor)
+SORT_KEYS = {"relevance", "price_asc", "price_desc", "alpha_asc", "alpha_desc"}
+
+
 @app.get("/search")
 def search(q: str = "", limit: int = 30, include_spare: bool = False,
+           auto: bool = False, sort: Optional[str] = None,
            subcategory: Optional[str] = None,
            category: Optional[list[str]] = Query(None),
            collection: Optional[list[str]] = Query(None),
@@ -383,9 +522,55 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
     category = category if isinstance(category, list) else None
     collection = collection if isinstance(collection, list) else None
     finish = finish if isinstance(finish, list) else None
+    sort_key = sort if sort in SORT_KEYS else "relevance"
 
     q_clean = q.strip()
-    tokens = [t for t in re.split(r"\s+", q.lower().strip()) if t]
+    tokens = [t for t in re.split(r"\s+", _norm(q)) if t]
+
+    # Interpretación LLM de la query (cacheada; la reutiliza search_models). Siempre que
+    # hay texto se usa para la verificación de atributos ("antideslizante"); los FILTROS
+    # y el orden solo se auto-aplican con auto=1 (búsqueda nueva del frontend), y solo
+    # los que el llamador NO fijó; lo aplicado se devuelve en "auto" para el sidebar.
+    analysis = None
+    auto_applied = {}
+    if q_clean and azure_search is not None:
+        try:
+            analysis = azure_search.analyze_query(q_clean)
+        except Exception as e:  # noqa: BLE001 — sin análisis se busca como siempre
+            print(f"[/search] analyze FALLO ({e!r}) -> sin análisis", flush=True)
+    if auto:
+        if analysis:
+            # colores simples ("negros") se amplían al grupo de color COMPLETO: el sidebar
+            # marca un color solo si TODO su grupo está seleccionado. Los compuestos
+            # ("negro mate") mantienen su lista precisa. El snap corre aunque el LLM no
+            # eligiera acabados: "dorados" no es subcadena de ningún acabado ('Oro
+            # cepillado'), pero el término SÍ nombra el color Dorado.
+            snapped = set(analysis["finish"])
+            for t in analysis.get("finish_terms") or []:
+                for col in _colors_of_term(t):
+                    snapped.update(COLOR_FINISHES.get(col, []))
+            fin_auto = sorted(snapped)
+            if not finish and fin_auto:
+                finish = fin_auto
+                auto_applied["finish"] = finish
+            if not category and analysis["category"]:
+                category = analysis["category"]
+                auto_applied["category"] = category
+            if not collection and analysis["collection"]:
+                collection = analysis["collection"]
+                auto_applied["collection"] = collection
+            if min_price is None and analysis["min_price"] is not None:
+                min_price = analysis["min_price"]
+                auto_applied["min_price"] = min_price
+            if max_price is None and analysis["max_price"] is not None:
+                max_price = analysis["max_price"]
+                auto_applied["max_price"] = max_price
+            if sort not in SORT_KEYS and analysis.get("sort"):
+                sort_key = analysis["sort"]
+                auto_applied["sort"] = sort_key
+            if auto_applied:
+                print(f"[/search] auto-filtros {auto_applied!r} "
+                      f"(texto: {analysis['search_text']!r})", flush=True)
 
     # Ranking por texto (q):
     #   - sin query  -> navegación: todo el catálogo con score 0 (solo facetas).
@@ -399,13 +584,24 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
             use_fallback = True
         else:
             try:
-                model_scores = azure_search.search_models(q_clean, k=AZURE_K)
+                # solo con auto se busca por el producto "limpio" (atributos -> filtros);
+                # sin auto (chat, facetas) el texto conserva colores (keywords).
+                q_eff = analysis["search_text"] if (auto and analysis) else None
+                model_scores = azure_search.search_models(q_clean, k=AZURE_K, q_eff=q_eff)
             except Exception as e:  # noqa: BLE001 — Azure caído/timeout: no romper la búsqueda
                 use_fallback = True
                 print(f"[/search] Azure FALLO ({e!r}) -> fallback substring", flush=True)
         engine = "fallback-substring" if use_fallback else "azure-semantic"
         n = 0 if model_scores is None else len(model_scores)
         print(f"[/search] q={q_clean!r} motor={engine} modelos_azure={n}", flush=True)
+        # Cobertura: traduce los modelos de Azure a los del catálogo (comodines '..'
+        # compactados) y reporta los que de verdad no existen en products.json.
+        if model_scores:
+            n_azure = len(model_scores)
+            model_scores, faltan = resolve_azure_models(model_scores)
+            print(f"[/search] cobertura catálogo: {len(model_scores)}/{n_azure} modelos resueltos"
+                  + (f" · sin match ({len(faltan)}): {faltan[:10]}" if faltan else ""),
+                  flush=True)
 
     # SCOPE = texto (q) + include_spare + subcategory ; con score para ordenar
     scope = []
@@ -428,6 +624,34 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
                 continue
         scope.append((score, p))
 
+    # --- atributos técnicos pedidos ("antideslizante", "extraplano"): el LLM los señala
+    # y aquí se VERIFICAN contra el texto real de cada producto (título+descripciones).
+    # Si algún producto del scope los cumple todos, el scope se queda solo con esos;
+    # si ninguno los cumple (dato inexistente o redactado distinto), no se toca (fail-open).
+    if scope and analysis and analysis.get("attr_terms"):
+        attr_terms = [_norm(t) for t in analysis["attr_terms"] if str(t).strip()]
+
+        def _has_attr(p, t):
+            blob = SEARCH_INDEX.get(p["sku"], "")
+            forms = {t, t + "s"}
+            if t.endswith("s"):
+                forms.add(t[:-1])
+            if t.endswith("a"):                  # género: termostática -> termostatico
+                forms.add(t[:-1] + "o")
+            elif t.endswith("o"):
+                forms.add(t[:-1] + "a")
+            return any(f in blob for f in forms)
+
+        cumplen = [(s, p) for s, p in scope
+                   if all(_has_attr(p, t) for t in attr_terms)]
+        if cumplen:
+            print(f"[/search] atributos {attr_terms}: {len(cumplen)}/{len(scope)} "
+                  f"productos los cumplen -> filtrado", flush=True)
+            scope = cumplen
+        else:
+            print(f"[/search] atributos {attr_terms}: 0 productos los cumplen -> ignorados",
+                  flush=True)
+
     sel = {
         "categories": category or [],
         "collections": collection or [],
@@ -440,6 +664,30 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
 
     # SKUs que cumplen todas las facetas, ordenados por score
     matched = [(s, p) for (s, p) in scope if matches(p, sel)]
+
+    # los auto-filtros nunca deben dejar la parrilla a cero (p. ej. color sin stock en esa
+    # familia). Relajación progresiva: se retira primero lo INFERIDO (categoría) y al final
+    # lo que el usuario pidió con palabras (precio, color), re-filtrando tras cada retirada.
+    if not matched and auto_applied:
+        for key in ("category", "collection", "min_price", "max_price", "finish"):
+            if key not in auto_applied:
+                continue
+            if key == "category":
+                sel["categories"] = []
+            elif key == "collection":
+                sel["collections"] = []
+            elif key == "finish":
+                sel["finishes"] = []
+            else:
+                lo, hi = sel["price"]
+                sel["price"] = (None, hi) if key == "min_price" else (lo, None)
+            del auto_applied[key]
+            matched = [(s, p) for (s, p) in scope if matches(p, sel)]
+            print(f"[/search] auto-filtro '{key}' retirado (0 resultados); "
+                  f"quedan {list(auto_applied) or 'ninguno'}", flush=True)
+            if matched:
+                break
+
     matched.sort(key=lambda x: -x[0])
 
     # leave-one-out (facetas y variantes-thumbnails, estas ultimas sin el filtro de color)
@@ -460,6 +708,26 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
             rep[m] = p
             order.append(m)
 
+    # reordena la parrilla COMPLETA si se pide (el limit trocea después): precio del
+    # modelo = min/max entre sus variantes que cumplen los filtros; sin precio, al final.
+    if sort_key != "relevance" and order:
+        if sort_key in ("price_asc", "price_desc"):
+            asc = sort_key == "price_asc"
+            best = {}
+            for _, p in matched:
+                v = _num(p.get("price_rrp"))
+                if v is None:
+                    continue
+                m = p.get("model")
+                cur = best.get(m)
+                best[m] = v if cur is None else (min(cur, v) if asc else max(cur, v))
+            order.sort(key=lambda m: (m not in best,
+                                      (best[m] if asc else -best[m]) if m in best else 0.0))
+        else:
+            order.sort(key=lambda m: (not (rep[m].get("title") or ""),
+                                      _norm(rep[m].get("title") or "")),
+                       reverse=(sort_key == "alpha_desc"))
+
     def build_card(m):
         variants = variants_by_model.get(m) or [rep[m]]
         default = 0
@@ -477,6 +745,7 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
         "category": _agg_models(loo("category"), "category_base"),
         "collection": _agg_models(loo("collection"), "collection"),
         "finish": _agg_models(finish_scope, "finish"),
+        "color": _agg_colors(finish_scope),
         "price": _bounds(loo("price"), RANGE_GETTERS["price"]),
         "dims": {
             "length": _bounds(loo("length"), _len_mm),
@@ -489,9 +758,15 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
         print(f"[/search] q={q_clean!r} -> modelos={len(order)} (scope={len(scope)}) limit={limit}",
               flush=True)
 
-    return {"query": q, "total": len(order),
+    resp = {"query": q, "sort": sort_key, "total": len(order),
             "results": [build_card(m) for m in order[:limit]],
             "facets": facets}
+    if auto:
+        # lo que el intérprete aplicó de verdad (tras el salvavidas de 0 resultados) y el
+        # texto "limpio" de producto, para que el frontend fije sidebar y próximas consultas.
+        resp["auto"] = {"search_text": analysis["search_text"] if analysis else q_clean,
+                        "applied": auto_applied}
+    return resp
 
 
 # ---------------------------------------------------------------- búsqueda por imagen
@@ -644,7 +919,9 @@ async def api_chat(body: dict):
     async def gen():
         if chat is None:
             yield json.dumps({"type": "error",
-                              "message": "Chat IA no disponible: falta el paquete anthropic en el backend."}) + "\n"
+                              "message": f"Chat IA no disponible en el backend ({_chat_import_error}). "
+                                         "Instala las dependencias (pip install -r requirements.txt) y reinicia."},
+                             ensure_ascii=False) + "\n"
             return
         async for ev in chat.stream_turn(body.get("text", ""),
                                          session_id=body.get("session_id"),

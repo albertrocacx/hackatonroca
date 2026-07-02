@@ -13,9 +13,18 @@ import {
   type ProductSummary, type ProductDetail, type Suggestion, type Filter,
   type Selected, type Facets as FacetsData, type ModelCard, type ShopItem,
   type ImageSearchGroup,
+  type SortKey,
 } from "./api";
 import { ImageDropPanel, CameraIcon, type Photo } from "./ImageSearch";
 import { downscalePhoto } from "./imageUtils";
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: "relevance", label: "Relevancia semántica" },
+  { value: "price_asc", label: "Precio: de menor a mayor" },
+  { value: "price_desc", label: "Precio: de mayor a menor" },
+  { value: "alpha_asc", label: "Alfabético (A–Z)" },
+  { value: "alpha_desc", label: "Alfabético (Z–A)" },
+];
 
 const CHAT_INTRO =
   "Hola. Dime qué buscas —un lavabo, un plato de ducha, una grifería— y te muestro opciones en la parrilla. Puedo filtrar por precio o acabado y afinar la búsqueda.";
@@ -147,6 +156,7 @@ export default function App() {
   const [baseText, setBaseText] = useState("");
   const [subcat, setSubcat] = useState<string | null>(null);
   const [sel, setSel] = useState<Selected>(EMPTY_SELECTED);
+  const [sort, setSort] = useState<SortKey>("relevance");
   const debounce = useRef<number | undefined>(undefined);
 
   // --- autocompletado ---
@@ -197,13 +207,31 @@ export default function App() {
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  // Única función que llama al backend. No toca la selección de facetas (sólo la usa).
-  async function runSearch(text: string, sc: string | null, s: Selected) {
+  // Única función que llama al backend. Con auto=true (búsqueda nueva de texto), el LLM
+  // del backend puede convertir atributos ("rojos") en filtros reales del catálogo y
+  // detectar el orden pedido ("descendente por precio"): se reflejan en sidebar/selector
+  // y el texto base queda limpio (solo el producto) para las re-consultas de facetas.
+  async function runSearch(text: string, sc: string | null, s: Selected,
+                           auto = false, sortKey: SortKey = sort) {
     setLoading(true); setError(null); setDetail(null); setOpen(false);
     setImageGroups(null);                    // una búsqueda de texto sale del modo imagen
     try {
-      const r = await search(text, s, sc);
+      const r = await search(text, s, sc, auto, sortKey);
       setResults(r.results); setTotal(r.total); setFacets(r.facets);
+      if (auto && r.auto) {
+        const a = r.auto.applied;
+        if (Object.keys(a).length > 0) {
+          setSel({
+            ...s,
+            categories: a.category ?? s.categories,
+            collections: a.collection ?? s.collections,
+            finishes: a.finish ?? s.finishes,
+            price: { min: a.min_price ?? s.price.min, max: a.max_price ?? s.price.max },
+          });
+        }
+        if (a.sort) setSort(a.sort);
+        if (r.auto.search_text) setBaseText(r.auto.search_text);
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -265,14 +293,15 @@ export default function App() {
   }
 
   // Nueva búsqueda desde el buscador: fija SCOPE y resetea facetas (semilla = filtros auto)
+  // y orden (el LLM puede volver a fijarlo si la query lo pide).
   function doSearch(e: FormEvent) {
     e.preventDefault();
     if (photos.length > 0) { runImageSearch(q); return; }
     if (!q.trim()) return;
     const s = withAutoFilters(EMPTY_SELECTED, autoFilters);
-    setBaseText(q); setSubcat(null); setSel(s); setSubmitted(q);
+    setBaseText(q); setSubcat(null); setSel(s); setSubmitted(q); setSort("relevance");
     clearTimeout(debounce.current);
-    runSearch(q, null, s);
+    runSearch(q, null, s, true, "relevance");
   }
 
   // Búsqueda de texto directa desde el panel al enfocar (sugerencias más buscadas y
@@ -281,9 +310,10 @@ export default function App() {
     skipSuggest.current = true;
     setQ(term);
     setBaseText(term); setSubcat(null); setSel(EMPTY_SELECTED); setSubmitted(term);
+    setSort("relevance");
     setOpen(false);
     clearTimeout(debounce.current);
-    runSearch(term, null, EMPTY_SELECTED);
+    runSearch(term, null, EMPTY_SELECTED, true, "relevance");
   }
 
   function pickSuggestion(sug: Suggestion) {
@@ -296,9 +326,9 @@ export default function App() {
     else if (sug.type === "subcategory") sc = sug.term;
     const s = withAutoFilters(base, autoFilters);
     const label = [sug.term, ...autoFilters.map((f) => f.label)].filter(Boolean).join(" · ");
-    setBaseText(""); setSubcat(sc); setSel(s); setSubmitted(label);
+    setBaseText(""); setSubcat(sc); setSel(s); setSubmitted(label); setSort("relevance");
     clearTimeout(debounce.current);
-    runSearch("", sc, s);
+    runSearch("", sc, s, false, "relevance");
   }
 
   // Cambio en el sidebar: actualiza selección, mantiene SCOPE, re-busca con debounce
@@ -306,6 +336,13 @@ export default function App() {
     setSel(next);
     clearTimeout(debounce.current);
     debounce.current = window.setTimeout(() => runSearch(baseText, subcat, next), 220);
+  }
+
+  // Cambio manual del orden: re-busca la misma consulta con el nuevo criterio
+  function onSortChange(v: SortKey) {
+    setSort(v);
+    clearTimeout(debounce.current);
+    runSearch(baseText, subcat, sel, false, v);
   }
 
   async function openProduct(sku: string) {
@@ -368,6 +405,7 @@ export default function App() {
           const f = ev.filters ?? {};
           setBaseText(q2);
           setSubcat(f.subcategory ?? null);
+          setSort(f.sort ?? "relevance");
           setSel({
             ...EMPTY_SELECTED,
             categories: f.category ? [f.category] : [],
@@ -400,7 +438,7 @@ export default function App() {
     if (!chatReady) {
       if (messages.length === 0) {
         setMessages([{ role: "error",
-          text: "Chat en modo demo. Para activarlo: ejecuta `claude setup-token`, añade CLAUDE_CODE_OAUTH_TOKEN a backend/.env y reinicia el servidor. La búsqueda ya funciona." }]);
+          text: "Chat en modo demo. Para activarlo, añade CLAUDE_API_KEY a backend/.env (o defínela como variable de entorno) y reinicia el servidor. La búsqueda ya funciona." }]);
       }
       return;
     }
@@ -587,6 +625,22 @@ export default function App() {
 
           {!loading && total !== null && (
             <h1 className="rs-count">{submitted} <span>({total})</span></h1>
+          )}
+
+          {!loading && total !== null && total > 0 && (
+            <div className="rs-toolbar">
+              <label className="rs-sort">
+                Ordenar por
+                <select
+                  value={sort}
+                  onChange={(e) => onSortChange(e.target.value as SortKey)}
+                >
+                  {SORT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
           )}
 
           {!loading && total === 0 && (

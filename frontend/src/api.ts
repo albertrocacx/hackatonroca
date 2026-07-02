@@ -79,19 +79,39 @@ export async function suggest(q: string): Promise<SuggestResponse> {
 
 // ---- Facetas ----
 export interface FacetValue { value: string; count: number; }
+// Color principal (Negro, Blanco...) con los acabados del catálogo que agrupa
+// (Negro -> Negro, Negro mate, Porcelana negra...). Marcar el color = seleccionarlos todos.
+export interface ColorGroup extends FacetValue { finishes: string[]; }
 export interface Range { min: number; max: number; }
 export interface Facets {
   category: FacetValue[];
   collection: FacetValue[];
   finish: FacetValue[];
+  color: ColorGroup[];
   price: Range | null;
   dims: { length: Range | null; width: Range | null; height: Range | null };
 }
+// Orden de la parrilla (lo aplica el backend sobre el total, antes del limit)
+export type SortKey = "relevance" | "price_asc" | "price_desc" | "alpha_asc" | "alpha_desc";
+
+// Filtros que el intérprete LLM del backend aplicó a una búsqueda auto=true
+// (solo los que el usuario no fijó; valores exactos del catálogo, listos para el sidebar).
+export interface AutoApplied {
+  finish?: string[];
+  category?: string[];
+  collection?: string[];
+  min_price?: number;
+  max_price?: number;
+  sort?: SortKey;
+}
+
 export interface SearchResponse {
   query: string;
+  sort?: SortKey;
   total: number;
   results: ModelCard[];
   facets: Facets;
+  auto?: { search_text: string; applied: AutoApplied };
 }
 
 // ---- Selección del sidebar ----
@@ -122,10 +142,14 @@ const RANGE_PARAMS: [keyof Selected, string, string][] = [
 export async function search(
   q: string,
   selected: Selected,
-  subcategory?: string | null
+  subcategory?: string | null,
+  auto = false,
+  sort: SortKey = "relevance"
 ): Promise<SearchResponse> {
   const p = new URLSearchParams();
   if (q) p.set("q", q);
+  if (auto) p.set("auto", "true");
+  if (sort !== "relevance") p.set("sort", sort);
   if (subcategory) p.set("subcategory", subcategory);
   selected.categories.forEach((c) => p.append("category", c));
   selected.collections.forEach((c) => p.append("collection", c));
@@ -267,6 +291,7 @@ export interface ChatFilters {
   collection?: string;
   subcategory?: string;
   finish?: string[];
+  sort?: SortKey;
   min_price?: number;
   max_price?: number;
   min_length?: number;
