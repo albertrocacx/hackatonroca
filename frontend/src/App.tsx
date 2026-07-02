@@ -31,7 +31,11 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 
 const CHAT_INTRO =
   "Hola. Dime qué buscas —un lavabo, un plato de ducha, una grifería— y te muestro opciones en la parrilla. Puedo filtrar por precio o acabado y afinar la búsqueda.";
-const TOOL_LABEL: Record<string, string> = { search_catalog: "Buscando en el catálogo" };
+const TOOL_LABEL: Record<string, string> = {
+  search_catalog: "Buscando en el catálogo",
+  find_local_suppliers: "Buscando distribuidores cercanos",
+  show_product: "Abriendo la ficha del producto",
+};
 
 const TYPE_LABEL: Record<string, string> = {
   category: "Categoría",
@@ -521,6 +525,15 @@ export default function App() {
             height: { min: f.min_height ?? null, max: f.max_height ?? null },
           });
           setMessages((m) => [...m, { role: "note", text: "Resultados actualizados ←" }]);
+        } else if (ev.type === "suppliers") {
+          // compra offline: abre el buscador de distribuidores cercanos, como el
+          // botón "Dónde comprar" del grid (geolocalización → /suppliers/nearby → lista + mapa).
+          openLocalSuppliers({ sku: "", title: ev.product ?? null, image: null, price_rrp: null });
+          setMessages((m) => [...m, { role: "note", text: "Buscador de distribuidores abierto ↗" }]);
+        } else if (ev.type === "product") {
+          // compra online: abre la ficha del producto (con su botón "Comprar online" → carrito).
+          openProduct(ev.sku);
+          setMessages((m) => [...m, { role: "note", text: "Ficha del producto abierta ↗" }]);
         } else if (ev.type === "done") {
           if (ev.session_id) sessionId.current = ev.session_id;
         } else if (ev.type === "error") {
@@ -579,6 +592,9 @@ export default function App() {
             onDrop={(e) => {
               if (!imageReady) return;
               e.preventDefault(); setDragOver(false);
+              // el drop sobre la dropzone del panel ya lo procesa ImageDropPanel;
+              // sin este guard el evento burbujea hasta aquí y la foto se añade dos veces
+              if ((e.target as HTMLElement).closest(".rs-dropzone")) return;
               if (e.dataTransfer.files.length) addPhotos(e.dataTransfer.files);
             }}
           >
@@ -792,12 +808,9 @@ export default function App() {
             </p>
           )}
 
-          {!loading && total !== null && (
-            <h1 className="rs-count">{submitted} <span>({total})</span></h1>
-          )}
-
           {!loading && total !== null && total > 0 && (
             <div className="rs-toolbar">
+              <h1 className="rs-count"><span>{total} resultado{total === 1 ? "" : "s"}</span></h1>
               <label className="rs-sort">
                 Ordenar por
                 <select
@@ -892,7 +905,7 @@ export default function App() {
         <Design ready={designReady} onClose={() => setDesignOpen(false)} />
       )}
 
-      <CartDrawer />
+      <CartDrawer onDesign={() => setDesignOpen(true)} />
 
       {localItem && (
         <LocalSuppliers item={localItem} onClose={() => setLocalItem(null)} />

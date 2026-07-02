@@ -205,20 +205,19 @@ button { font-family: inherit; }
 .rs-main { max-width: 1200px; margin: 0 auto; padding: 0 40px 80px; }
 
 .rs-count {
-  text-align: center;
-  font-weight: 300;
-  font-size: 40px;
-  letter-spacing: -0.5px;
-  margin: 64px 0 48px;
+  font-weight: 400;
+  font-size: 14px;
+  letter-spacing: 0;
+  margin: 0;
 }
 .rs-count span { color: var(--muted); }
 
-/* barra de herramientas de resultados: selector de orden a la derecha */
+/* barra de herramientas de resultados: nº de resultados a la izquierda, orden a la derecha */
 .rs-toolbar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
-  margin: -28px 0 20px;
+  margin: 24px 0 20px;
 }
 .rs-sort {
   display: inline-flex;
@@ -692,6 +691,12 @@ button { font-family: inherit; }
   font-family: inherit; font-size: 15px; padding: 14px; border-radius: 6px; cursor: pointer;
 }
 .rs-cart-checkout:hover { background: #000; }
+.rs-cart-design {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin-top: 10px; border: 1px solid var(--ink); background: none; color: var(--ink);
+  font-family: inherit; font-size: 14px; padding: 12px; border-radius: 6px; cursor: pointer;
+}
+.rs-cart-design:hover { background: var(--tile); }
 .rs-cart-clear {
   width: 100%; border: none; background: none; color: var(--muted);
   font-family: inherit; font-size: 13px; padding: 10px 0 0; cursor: pointer; text-decoration: underline;
@@ -837,7 +842,7 @@ button { font-family: inherit; }
 
 @media (max-width: 600px) {
   /* resultados */
-  .rs-count { font-size: 26px; margin: 32px 0 24px; }
+  .rs-count { font-size: 13px; }
   .rs-grid { gap: 32px 20px; }
   .rs-state { padding: 48px 0; }
 
