@@ -239,6 +239,51 @@ def search_manual_impl(sku: str, doctype: str, question: str | None = None,
     return payload
 
 
+# --- Tool de guías de estilo: consejos de estilo/decoración/tendencias (RocaLife) ---
+# Recupera del índice de artículos (search_style) por búsqueda semántica y devuelve
+# fragmentos + título + url PÚBLICA (roca.es) para que Claude cite el artículo como enlace.
+# Mismo patrón que search_manual, pero sobre el corpus editorial (no manuales de producto).
+STYLE_TOP = 6
+
+_STYLE_TOOL = {
+    "name": "search_style_guide",
+    "description": ("Consulta las GUÍAS DE ESTILO de Roca: artículos editoriales de RocaLife "
+                    "(ideas de decoración, tendencias, cómo elegir, combinar acabados y colores, "
+                    "reformas, estilos de baño y cocina). Úsala cuando el usuario pida CONSEJO "
+                    "de estilo/decoración/inspiración/tendencias o pregunte por un artículo. NO "
+                    "es para datos de producto (usa search_catalog) ni para manuales/instalación "
+                    "(usa search_manual). Devuelve fragmentos relevantes y la URL pública del "
+                    "artículo para citarla como enlace."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string",
+                      "description": "Consulta en lenguaje natural (español), p.ej. 'ideas para "
+                                     "un baño pequeño' o 'cómo combinar acabados en oro'."},
+            "keywords": {"type": "array", "items": {"type": "string"},
+                         "description": "Opcional: filtra por temas/etiquetas del artículo (en "
+                                        "inglés, p.ej. 'small bathrooms', 'colours', 'styles', "
+                                        "'renovations'). Normalmente NO hace falta."},
+        },
+        "required": ["query"],
+    },
+}
+
+
+def search_style_guide_impl(query: str, keywords=None, top: int = STYLE_TOP) -> dict:
+    """Consulta del índice de guías de estilo. Devuelve un payload citable (título + url
+    pública + fragmento). Aislada para poder testearla sin el LLM."""
+    import search_style  # búsqueda híbrida sobre el índice de artículos de estilo
+    q = (query or "").strip()
+    if not q:
+        return {"error": "Falta la consulta (query)."}
+    hits = search_style.search_style(q, keywords=keywords or None, top=top)
+    results = [{"title": h.get("title"), "url": h.get("url"), "slug": h.get("slug"),
+                "keywords": h.get("keywords"), "text": (h.get("text") or "")[:1200]}
+               for h in hits]
+    return {"query": q, "count": len(results), "results": results}
+
+
 # --- Tools de UI: no calculan nada, abren vistas en el frontend (compra guiada) ---
 # stream_turn emite un evento ({type: suppliers|product}) que el cliente traduce en
 # openLocalSuppliers / openProduct; el tool_result solo confirma la acción al modelo.
@@ -302,7 +347,7 @@ def configure(search_fn):
                         "del usuario."),
         "input_schema": {"type": "object", "properties": props, "required": ["query"]},
     }
-    _TOOLS = [catalog_tool, _MANUAL_TOOL, _SUPPLIERS_TOOL, _SHOW_PRODUCT_TOOL]
+    _TOOLS = [catalog_tool, _MANUAL_TOOL, _STYLE_TOOL, _SUPPLIERS_TOOL, _SHOW_PRODUCT_TOOL]
 
 
 def _search_kwargs(a: dict, limit: int) -> dict:
@@ -334,6 +379,10 @@ parrilla automáticamente, así que no listes todos: resume y señala la parrill
 tienes algunas opciones a la izquierda").
 - search_manual: consultar la documentación de UN producto concreto (manual de usuario, \
 guía de instalación o ficha técnica): entrega el documento completo o responde preguntas.
+- search_style_guide: consultar las GUÍAS DE ESTILO de Roca (artículos de RocaLife): \
+consejos de decoración, tendencias, cómo combinar colores y acabados, ideas para reformas \
+y estilos de baño/cocina. Úsala para inspiración/consejo de estilo o si preguntan por un \
+artículo; NO para datos de producto (search_catalog) ni manuales (search_manual).
 - find_local_suppliers: abre el buscador de distribuidores Roca cercanos (mapa + datos \
 reales por distancia). Úsala para la compra OFFLINE / física: cuando pregunte por tiendas, \
 distribuidores o puntos de venta CERCANOS ("¿dónde compro esto cerca de mí?"), o cuando el \
@@ -395,6 +444,15 @@ CON `question`: responde SOLO con la información de los fragmentos devueltos.
 - En AMBOS modos cita SIEMPRE la fuente como ENLACE MARKDOWN CLICABLE al `pdf_url`, \
 p. ej. "[Manual de usuario · SKU 812429000](https://…)" (uno por PDF citado). Si no hay \
 resultados o los fragmentos no contienen la respuesta, dilo claramente (no inventes).
+
+GUÍAS DE ESTILO (search_style_guide):
+- Úsala cuando el usuario pida CONSEJO de estilo/decoración, inspiración, tendencias, cómo \
+combinar colores o acabados, ideas para una reforma o cómo ambientar un espacio (p. ej. \
+"ideas para un baño pequeño", "¿qué combina con acabados dorados?", "tendencias en negro"). \
+Pasa la consulta del usuario en `query`; normalmente no hace falta `keywords`.
+- Responde con los consejos de los fragmentos devueltos (no inventes) y CITA SIEMPRE el \
+artículo como ENLACE MARKDOWN CLICABLE a su `url`, p. ej. "[Reflejos dorados en el baño](https://…)". \
+Puedes combinarla con search_catalog para sugerir productos concretos acordes al consejo.
 
 Comportamiento:
 - Responde en el idioma del usuario (español por defecto). Sé concreto y breve.
@@ -468,9 +526,16 @@ def _manual_label(inp: dict) -> str:
     return f"{verb} {doc} del producto {sku}" if sku else f"{verb} {doc}"
 
 
+def _style_label(inp: dict) -> str:
+    q = (inp.get("query") or "").strip()
+    return f"Buscando guías de estilo sobre {q}" if q else "Buscando guías de estilo"
+
+
 def _tool_label(name: str, inp: dict) -> str:
     if name == "search_manual":
         return _manual_label(inp)
+    if name == "search_style_guide":
+        return _style_label(inp)
     if name == "find_local_suppliers":
         prod = inp.get("product")
         return f"Buscando distribuidores cercanos para {prod}" if prod \
@@ -562,6 +627,19 @@ async def stream_turn(text: str, session_id: str | None = None, view: dict | Non
                         payload = search_manual_impl(inp.get("sku", ""), inp.get("doctype", ""),
                                                      inp.get("question"), inp.get("model"))
                     except Exception as e:  # noqa: BLE001
+                        # visible en logs (Railway): sin esto el fallo solo lo ve el LLM
+                        print(f"[manual] ERROR {type(e).__name__}: {e}", flush=True)
+                        payload = {"error": str(e)}
+                    tool_results.append({"type": "tool_result", "tool_use_id": block.id,
+                                         "content": json.dumps(payload, ensure_ascii=False)})
+                    continue
+
+                if block.name == "search_style_guide":
+                    try:
+                        payload = search_style_guide_impl(inp.get("query", ""), inp.get("keywords"))
+                    except Exception as e:  # noqa: BLE001
+                        # visible en logs (Railway): sin esto el fallo solo lo ve el LLM
+                        print(f"[style] ERROR {type(e).__name__}: {e}", flush=True)
                         payload = {"error": str(e)}
                     tool_results.append({"type": "tool_result", "tool_use_id": block.id,
                                          "content": json.dumps(payload, ensure_ascii=False)})

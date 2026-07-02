@@ -514,6 +514,32 @@ def search_manual(sku: str, doctype: str, question: str = "", model: str = "") -
 
 
 @mcp.tool()
+def search_style_guide(query: str, keywords: Optional[list[str]] = None, top: int = 6) -> dict:
+    """Consulta las GUÍAS DE ESTILO de Roca: artículos editoriales de RocaLife (ideas de
+    decoración, tendencias, cómo elegir, combinar acabados y colores, reformas, estilos de
+    baño y cocina). Úsala para dar CONSEJO de estilo/decoración/inspiración o cuando
+    pregunten por un artículo; NO para datos de producto (usa search_catalog) ni para
+    manuales de instalación/uso (usa search_manual).
+
+    Devuelve fragmentos relevantes con el título y la URL PÚBLICA del artículo (roca.es)
+    para citarla como enlace clicable en la respuesta.
+
+    Args:
+        query: Consulta en lenguaje natural (español), p. ej. "ideas para un baño pequeño"
+            o "cómo combinar acabados en oro".
+        keywords: Opcional; filtra por temas/etiquetas del artículo (en inglés, p. ej.
+            "small bathrooms", "colours", "styles", "renovations"). Normalmente no hace falta.
+        top: Máximo de fragmentos a devolver (por defecto 6).
+    """
+    if chat is None:
+        return {"error": "Módulo de guías de estilo no disponible en este entorno."}
+    try:
+        return chat.search_style_guide_impl(query, keywords or None, top=top)
+    except Exception as e:  # noqa: BLE001 — índice de estilo caído: error legible
+        return {"error": f"No se pudo consultar las guías de estilo: {e}"}
+
+
+@mcp.tool()
 def find_stores(lat: float, lon: float, limit: int = 8,
                 exposition_only: bool = False) -> dict:
     """Puntos de venta físicos Roca en España ordenados por cercanía a unas coordenadas
