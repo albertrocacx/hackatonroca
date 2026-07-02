@@ -324,7 +324,11 @@ export default function App() {
         add.push({ id: `${f.name}-${f.size}-${Math.random()}`, blob, url: URL.createObjectURL(blob) });
       } catch { /* foto ilegible: se ignora */ }
     }
-    if (add.length) { setPhotos((p) => [...p, ...add]); setImgPanelOpen(true); }
+    if (add.length) {
+      setPhotos((p) => [...p, ...add]);
+      setImgPanelOpen(true);
+      setImageContext(null);   // fotos nuevas: el contexto de la última búsqueda ya no las representa
+    }
   }
 
   function removePhoto(id: string) {
@@ -348,7 +352,7 @@ export default function App() {
       .map((c) => ({ sku: c.variants[c.default]?.sku ?? c.variants[0]?.sku, title: c.title }))
       .filter((m): m is { sku: string; title: string | null } => !!m.sku);
 
-  async function runImageSearch(text: string) {
+  async function runImageSearch(text: string): Promise<ImageSearchContext | null> {
     setLoading(true); setError(null); setDetail(null); setOpen(false); setImgPanelOpen(false);
     try {
       const mode = photos.length > 1 && !sameProduct ? "distinct" : "same";
@@ -370,9 +374,12 @@ export default function App() {
         setTotal(r.total);
         ctx.groups = [{ photo: 0, matches: topMatches(r.results) }];
       }
-      setImageContext(ctx.groups.some((g) => g.matches.length) ? ctx : null);
+      const ok = ctx.groups.some((g) => g.matches.length) ? ctx : null;
+      setImageContext(ok);
+      return ok;             // para encadenar (Búsqueda IA directa) sin esperar al re-render
     } catch (err) {
       setError(String(err));
+      return null;
     } finally {
       setLoading(false);
     }
@@ -508,7 +515,9 @@ export default function App() {
   }, []);
 
   // Envía un turno al agente y consume el stream NDJSON, actualizando chat + parrilla.
-  async function sendChat(text: string) {
+  // imageCtx: contexto de imagen recién calculado (Búsqueda IA directa), aún no visible
+  // en el estado por el re-render pendiente; si no llega, se usa el del estado.
+  async function sendChat(text: string, imageCtx?: ImageSearchContext | null) {
     if (!text.trim() || chatBusy) return;
     setMessages((m) => [...m, { role: "user", text }]);
     setChatBusy(true);
@@ -521,7 +530,7 @@ export default function App() {
           .map((r) => r.variants[r.default]?.sku ?? r.variants[0]?.sku)
           .filter(Boolean),
         selected: lastProduct ?? undefined,
-        image_search: imageContext ?? undefined,
+        image_search: (imageCtx !== undefined ? imageCtx : imageContext) ?? undefined,
       };
       for await (const ev of streamChat({ text, session_id: sessionId.current, view })) {
         if (ev.type === "text") {
@@ -588,8 +597,9 @@ export default function App() {
   }
 
   // Botón "Búsqueda IA": abre el panel y siembra la conversación con la consulta actual.
-  // Tras una búsqueda por imagen, la semilla parte de sus coincidencias (viajan en view.image_search).
-  function openAI() {
+  // Con fotos subidas hace ÉL MISMO la búsqueda visual (si aún no se hizo) y arranca el
+  // chat desde lo identificado; tras un Buscar previo reutiliza ese contexto sin repetirla.
+  async function openAI() {
     setAiOpen(true);
     let seed = q.trim();
     if (!chatReady) {
@@ -599,10 +609,17 @@ export default function App() {
       }
       return;
     }
-    if (!seed && imageContext) {
+    let ctx: ImageSearchContext | null | undefined;   // undefined = usar el del estado
+    if (photos.length > 0 && !imageContext && !chatBusy) {
+      setChatStatus("Buscando por imagen");
+      ctx = await runImageSearch(q);
+      setChatStatus(null);
+    }
+    const effective = ctx !== undefined ? ctx : imageContext;
+    if (!seed && effective) {
       seed = "He buscado por foto. Preséntame brevemente lo que has identificado y ayúdame a elegir o afinar.";
     }
-    if (seed) sendChat(seed);
+    if (seed) sendChat(seed, ctx);
     else if (messages.length === 0) setMessages([{ role: "assistant", text: CHAT_INTRO }]);
   }
 
