@@ -51,8 +51,28 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+// Botón añadir/quitar de la cesta en las tiras de productos. Cuando el producto ya
+// está en la cesta, el hover avisa de que el clic lo quita.
+function CartToggle({ inCart, onAdd, onRemove }: {
+  inCart: boolean; onAdd: () => void; onRemove: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      className={inCart ? "is-added" : ""}
+      title={inCart ? "Quitar de la cesta" : undefined}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={inCart ? onRemove : onAdd}
+    >
+      {inCart ? (hover ? "Quitar" : "✓ En la cesta") : "Añadir"}
+    </button>
+  );
+}
+
 export default function Design({ ready, onClose }: Props) {
-  const { lines, addToCart } = useCart();
+  const { lines, addToCart, remove } = useCart();
   const usable = lines.filter((l) => l.item.image);
   const [sel, setSel] = useState<Set<string>>(
     () => new Set(usable.slice(0, 7).map((l) => l.item.sku))
@@ -70,8 +90,10 @@ export default function Design({ ready, onClose }: Props) {
   // --- renueva tu baño (análisis de la foto) ---
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<RenewalItem[] | null>(null);
-  const [added, setAdded] = useState<Set<string>>(new Set());
   const [view, setView] = useState<"render" | "analysis">("render");
+
+  // "en la cesta" se deriva del carrito real: refleja también quitados desde el cajón
+  const inCart = new Set(lines.map((l) => l.item.sku));
 
   useEffect(() => {
     if (!busy) return;
@@ -161,7 +183,16 @@ export default function Design({ ready, onClose }: Props) {
       price_rrp: p.price_rrp, finish: p.finish, collection: p.collection,
     }, 1, false);
     setSel((prev) => new Set(prev).add(p.sku));
-    setAdded((prev) => new Set(prev).add(p.sku));
+  }
+
+  // Quita de la cesta y desmárcalo para el próximo render.
+  function removePick(sku: string) {
+    remove(sku);
+    setSel((prev) => {
+      const next = new Set(prev);
+      next.delete(sku);
+      return next;
+    });
   }
 
   const working = busy || analyzing;
@@ -351,13 +382,11 @@ export default function Design({ ready, onClose }: Props) {
                                 </p>
                                 <p className="rs-design-pprice">{eur(p.price_rrp)}</p>
                               </div>
-                              <button
-                                type="button"
-                                className={added.has(p.sku) ? "is-added" : ""}
-                                onClick={() => addPick(p)}
-                              >
-                                {added.has(p.sku) ? "✓ En la cesta" : "Añadir"}
-                              </button>
+                              <CartToggle
+                                inCart={inCart.has(p.sku)}
+                                onAdd={() => addPick(p)}
+                                onRemove={() => removePick(p.sku)}
+                              />
                             </li>
                           ))}
                         </ul>
@@ -392,17 +421,15 @@ export default function Design({ ready, onClose }: Props) {
                         <p className="rs-design-pname">{p.title ?? p.sku}</p>
                         <p className="rs-design-pprice">{eur(p.price_rrp)}</p>
                       </div>
-                      <button
-                        type="button"
-                        className={added.has(p.sku) ? "is-added" : ""}
-                        onClick={() => addPick({
+                      <CartToggle
+                        inCart={inCart.has(p.sku)}
+                        onAdd={() => addPick({
                           sku: p.sku, title: p.title, image: p.image,
                           price_rrp: p.price_rrp, finish: p.finish,
                           collection: p.collection,
                         })}
-                      >
-                        {added.has(p.sku) ? "✓ En la cesta" : "Añadir"}
-                      </button>
+                        onRemove={() => removePick(p.sku)}
+                      />
                     </li>
                   ))}
                 </ul>

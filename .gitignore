@@ -59,3 +59,7 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Tooling local (no versionar)
+.claude/
+.playwright-mcp/

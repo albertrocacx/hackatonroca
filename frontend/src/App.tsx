@@ -8,6 +8,7 @@ import { useCart, CartDrawer } from "./cart";
 import LocalSuppliers from "./LocalSuppliers";
 import ProductCta from "./ProductCta";
 import Design from "./Design";
+import Compare from "./Compare";
 import {
   search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED, searchByImage,
   type ProductSummary, type ProductDetail, type Suggestion, type Filter, type AppliedTag,
@@ -139,6 +140,19 @@ export default function App() {
   //   "Compra online"            -> addToCart(item)
   //   "Encuentra proveedor local"-> openLocalSuppliers(item)
   function openLocalSuppliers(item: ShopItem) { setLocalItem(item); }
+
+  // --- comparador: selección en el grid (modelo -> sku de la variante mostrada) ---
+  const [selected, setSelected] = useState<Record<string, string>>({});
+  const [compareSkus, setCompareSkus] = useState<string[] | null>(null);
+  const nSel = Object.keys(selected).length;
+
+  function toggleSelect(model: string, sku: string) {
+    setSelected((s) => {
+      const c = { ...s };
+      if (c[model]) delete c[model]; else c[model] = sku;
+      return c;
+    });
+  }
 
   // --- diseña tu baño (render IA) ---
   const [designOpen, setDesignOpen] = useState(false);
@@ -801,6 +815,8 @@ export default function App() {
                       onOpen={openProduct}
                       onBuyOnline={addToCart}
                       onFindLocal={openLocalSuppliers}
+                      selected={!!selected[c.model]}
+                      onToggleSelect={toggleSelect}
                     />
                   ))}
                 </div>
@@ -815,6 +831,8 @@ export default function App() {
                   onOpen={openProduct}
                   onBuyOnline={addToCart}
                   onFindLocal={openLocalSuppliers}
+                  selected={!!selected[c.model]}
+                  onToggleSelect={toggleSelect}
                 />
               ))}
             </div>
@@ -822,6 +840,25 @@ export default function App() {
         </main>
       </div>
       </div>
+
+      {/* Barra fija del comparador: aparece con 2+ productos marcados */}
+      <div className={`rs-cmpbar${nSel >= 2 ? " is-show" : ""}`} aria-hidden={nSel < 2}>
+        <span>{nSel} seleccionado{nSel !== 1 ? "s" : ""}</span>
+        <button type="button" className="rs-cmp-do" onClick={() => setCompareSkus(Object.values(selected))}>
+          Comparar
+        </button>
+        <button type="button" className="rs-cmp-clr" onClick={() => setSelected({})}>
+          Limpiar
+        </button>
+      </div>
+
+      {compareSkus && (
+        <Compare
+          skus={compareSkus}
+          onClose={() => setCompareSkus(null)}
+          onOpen={(sku) => { setCompareSkus(null); openProduct(sku); }}
+        />
+      )}
 
       {aiOpen && (
         <Chat

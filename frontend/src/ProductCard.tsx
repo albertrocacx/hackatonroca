@@ -9,13 +9,16 @@ function price(p: number | null) {
 }
 
 export default function ProductCard({
-  card, onOpen, onBuyOnline, onFindLocal,
+  card, onOpen, onBuyOnline, onFindLocal, selected, onToggleSelect,
 }: {
   card: ModelCard;
   onOpen: (sku: string) => void;
   // CTA de compra (UI en ProductCta): "Comprar online" -> carrito, "Donde comprar" -> distribuidores.
   onBuyOnline?: (item: ShopItem) => void;
   onFindLocal?: (item: ShopItem) => void;
+  // Comparador: check sobre la imagen; la selección vive en App (modelo -> sku mostrado)
+  selected?: boolean;
+  onToggleSelect?: (model: string, sku: string) => void;
 }) {
   const [idx, setIdx] = useState(card.default ?? 0);
   // nueva búsqueda / cambio de datos -> vuelve a la variante por defecto
@@ -31,9 +34,21 @@ export default function ProductCard({
   };
 
   return (
-    <article className="rs-card">
+    <article className={`rs-card${selected ? " is-sel" : ""}`}>
       <div className="rs-card-main" onClick={() => onOpen(v.sku)}>
-        <Tile image={v.image} title={card.title} />
+        <div className="rs-tile-box">
+          <Tile image={v.image} title={card.title} />
+          {onToggleSelect && (
+            <button
+              type="button"
+              className="rs-pick"
+              aria-label="Seleccionar para comparar"
+              aria-pressed={selected}
+              title="Comparar"
+              onClick={(e) => { e.stopPropagation(); onToggleSelect(card.model, v.sku); }}
+            >✓</button>
+          )}
+        </div>
         {card.collection && <p className="rs-coll">{card.collection}</p>}
         <h3 className="rs-title">{card.title}</h3>
         <div className="rs-meta">
