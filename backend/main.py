@@ -531,35 +531,61 @@ _DIM_PARAM = {"length": ("min_length", "max_length"),
               "height": ("min_height", "max_height")}
 
 
-def _category_dim_bounds(category, dimension):
+def _category_products(category):
+    return [p for p in PRODUCTS if _field_has(p, "category_base", category)]
+
+
+def _category_dim_percentiles(products, dimension):
+    """min, p33, p66, max (y cobertura) de una dimension para un conjunto de productos.
+    None si no hay valores. La cobertura es la fraccion de productos con valor numerico."""
     getter = _DIM_GETTER.get(dimension)
-    if not getter or not category:
+    if not getter or not products:
         return None
-    prods = [p for p in PRODUCTS if _field_has(p, "category_base", category)]
-    return _bounds(prods, getter)
+    vals = [v for v in (getter(p) for p in products) if v is not None]
+    if not vals:
+        return None
+    arr = np.array(vals, dtype="float64")
+    return {"min": float(arr.min()), "p33": float(np.percentile(arr, 33)),
+            "p66": float(np.percentile(arr, 66)), "max": float(arr.max()),
+            "coverage": len(vals) / len(products)}
 
 
-def _resolve_size(category, size):
-    """Convierte {band, dimension} a un rango numerico por TERCIOS del rango real de esa
-    dimension para la categoria detectada. Devuelve (dimension, min, max) o None."""
-    if not isinstance(size, dict):
-        return None
-    band = size.get("band")
-    dim = size.get("dimension") or "length"
-    if band not in ("small", "medium", "large"):
-        return None
-    b = _category_dim_bounds(category, dim)
-    if not b or b["max"] <= b["min"]:
-        return None
-    lo, hi = b["min"], b["max"]
-    third = (hi - lo) / 3.0
-    if band == "small":
-        r = (lo, lo + third)
-    elif band == "medium":
-        r = (lo + third, lo + 2 * third)
-    else:
-        r = (lo + 2 * third, hi)
-    return dim, round(r[0]), round(r[1])
+def _resolve_size_multi(category, band):
+    """Para cada dimension RELEVANTE de la categoria (cobertura >=40% y con variacion),
+    reparte por tercios de PERCENTIL: small=[min,p33], medium=[p33,p66], large=[p66,max].
+    Devuelve [(dimension, min, max), ...] (vacio si no hay dims relevantes)."""
+    if band not in ("small", "medium", "large") or not category:
+        return []
+    prods = _category_products(category)
+    out = []
+    for dim in ("length", "width", "height"):
+        pc = _category_dim_percentiles(prods, dim)
+        if not pc or pc["coverage"] < 0.4 or pc["p66"] <= pc["p33"]:
+            continue
+        if band == "small":
+            r = (pc["min"], pc["p33"])
+        elif band == "medium":
+            r = (pc["p33"], pc["p66"])
+        else:
+            r = (pc["p66"], pc["max"])
+        out.append((dim, round(r[0]), round(r[1])))
+    return out
+
+
+PRICE_BAND_LABEL = {"cheap": "Barato", "mid": "Gama media", "expensive": "Caro"}
+
+
+def _resolve_price_band_named(name, category):
+    """Precio cualitativo -> min/max usando las bandas p25/p75 de la categoria (o global).
+    cheap=<=p25, expensive=>=p75, mid=[p25,p75]. Devuelve dict de filtros o {}."""
+    if name not in ("cheap", "mid", "expensive"):
+        return {}
+    b = PRICE_BANDS.get(category) or PRICE_BANDS["__global__"]
+    if name == "cheap":
+        return {"max_price": b["p25"]}
+    if name == "expensive":
+        return {"min_price": b["p75"]}
+    return {"min_price": b["p25"], "max_price": b["p75"]}
 
 
 def _price_label(mn, mx):
@@ -605,6 +631,7 @@ def _build_interpretation(raw, data):
         tags.append({"id": "finish", "type": "finish",
                      "label": str(color).capitalize() if color else "Color"})
 
+    # precio: numero explicito tiene prioridad; si no, banda cualitativa por categoria
     price = data.get("price") if isinstance(data.get("price"), dict) else {}
     mn, mx = price.get("min"), price.get("max")
     if mn is not None or mx is not None:
@@ -613,14 +640,24 @@ def _build_interpretation(raw, data):
         if mx is not None:
             filters["max_price"] = mx
         tags.append({"id": "price", "type": "price", "label": _price_label(mn, mx)})
+    else:
+        pband = data.get("price_band")
+        pf = _resolve_price_band_named(pband, cat)
+        if pf:
+            filters.update(pf)
+            tags.append({"id": "price", "type": "price",
+                         "label": PRICE_BAND_LABEL.get(pband, "Precio")})
 
-    size = _resolve_size(cat, data.get("size"))
-    if size:
-        dim, smin, smax = size
-        pmin, pmax = _DIM_PARAM[dim]
-        filters[pmin], filters[pmax] = smin, smax
-        band = (data.get("size") or {}).get("band")
-        tags.append({"id": "size", "type": "size", "dimension": dim,
+    # tamano: reparte por percentiles de la categoria en TODAS las dimensiones relevantes
+    band = (data.get("size") or {}).get("band") if isinstance(data.get("size"), dict) else None
+    size_ranges = _resolve_size_multi(cat, band)
+    if size_ranges:
+        dims = []
+        for dim, smin, smax in size_ranges:
+            pmin, pmax = _DIM_PARAM[dim]
+            filters[pmin], filters[pmax] = smin, smax
+            dims.append(dim)
+        tags.append({"id": "size", "type": "size", "dimensions": dims,
                      "label": f"Tamaño {SIZE_LABEL.get(band, band)}"})
 
     search_text = (data.get("search_text") or "").strip() or corrected_query

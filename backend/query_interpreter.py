@@ -70,7 +70,8 @@ SYSTEM = (
     "Recibes una frase libre en espanol y devuelves SOLO un objeto JSON valido, "
     "sin texto adicional ni bloques de codigo. Tu trabajo:\n"
     "1) Corregir erratas tipograficas SIN cambiar el significado ni traducir. "
-    "Si no hay erratas, devuelve la frase igual.\n"
+    "Corrige TAMBIEN el sustantivo del producto (p.ej. 'patos de ducha' -> 'platos de ducha', "
+    "'lababo' -> 'lavabo', 'griferia' -> 'griferia'). Si no hay erratas, devuelve la frase igual.\n"
     "2) Extraer los atributos de producto que aparezcan en la frase.\n\n"
     "Esquema exacto del JSON de salida:\n"
     "{\n"
@@ -80,16 +81,20 @@ SYSTEM = (
     '  "color": string|null,             // la palabra de color/acabado que uso el usuario (p.ej. "rojo"), para la etiqueta; o null\n'
     '  "finishes": string[],             // valores EXACTOS de la lista de acabados que correspondan a ese color; [] si ninguno\n'
     '  "collection": string|null,        // nombre de coleccion/linea de diseno si se menciona, o null\n'
-    '  "price": { "min": number|null, "max": number|null },  // en euros\n'
-    '  "size": { "band": "small"|"medium"|"large"|null, "dimension": "length"|"width"|"height"|null },\n'
+    '  "price": { "min": number|null, "max": number|null },  // solo si hay numero explicito, en euros\n'
+    '  "price_band": "cheap"|"mid"|"expensive"|null,          // precio cualitativo sin numero\n'
+    '  "size": { "band": "small"|"medium"|"large"|null },     // tamano cualitativo (el backend elige las dimensiones)\n'
     '  "search_text": string             // solo el/los sustantivos de producto (p.ej. "ducha"); "" si no hay\n'
     "}\n\n"
     "Reglas:\n"
-    "- 'menos de 300', 'hasta 300', 'por debajo de 300' => price.max=300. "
+    "- Precio con NUMERO: 'menos de 300', 'hasta 300', 'por debajo de 300' => price.max=300. "
     "'mas de 500', 'desde 500' => price.min=500. 'entre 200 y 400' => min=200,max=400.\n"
+    "- Precio CUALITATIVO sin numero: 'barato/economico/asequible/basico' => price_band=cheap; "
+    "'caro/premium/lujo/gama alta/exclusivo' => price_band=expensive; 'gama media' => price_band=mid. "
+    "Si hay numero explicito usa price.min/max y deja price_band=null.\n"
     "- Tamanos relativos: 'pequena/mini/compacta'=>small, 'mediana'=>medium, 'grande/xl/amplia'=>large. "
-    "Elige la dimension mas relevante para esa categoria (length=largo, width=ancho, height=alto). "
-    "Si no hay mencion de tamano, band=null y dimension=null.\n"
+    "Solo indica band; NO elijas dimension (lo decide el backend por categoria). "
+    "Si no hay mencion de tamano, band=null.\n"
     "- category DEBE salir de la lista de categorias dada (elige el valor mas parecido) o null.\n"
     "- Para el color/acabado: rellena 'finishes' con los valores EXACTOS de la lista de acabados dada "
     "que correspondan al color pedido (p.ej. 'rojo' -> ['Passion Red']; 'verde' -> todos los verdes de la lista; "

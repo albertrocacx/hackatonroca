@@ -277,7 +277,8 @@ export default function App() {
       case "collection": return s.collections.length > 0;
       case "finish": return s.finishes.length > 0;
       case "price": return s.price.min != null || s.price.max != null;
-      case "size": return tag.dimension ? (s[tag.dimension].min != null || s[tag.dimension].max != null) : false;
+      case "size":
+        return (tag.dimensions ?? []).some((d) => s[d].min != null || s[d].max != null);
       default: return true;
     }
   }
@@ -293,7 +294,7 @@ export default function App() {
     else if (tag.id === "collection") next.collections = [];
     else if (tag.id === "finish") next.finishes = [];
     else if (tag.id === "price") next.price = { min: null, max: null };
-    else if (tag.id === "size" && tag.dimension) next[tag.dimension] = { min: null, max: null };
+    else if (tag.id === "size") for (const d of tag.dimensions ?? []) next[d] = { min: null, max: null };
     setSel(next);
     setAppliedTags((t) => t.filter((x) => x.id !== tag.id));
     clearTimeout(debounce.current);

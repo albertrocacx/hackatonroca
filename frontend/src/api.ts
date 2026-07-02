@@ -151,7 +151,7 @@ export interface AppliedTag {
   id: "category" | "collection" | "finish" | "price" | "size";
   type: string;
   label: string;
-  dimension?: "length" | "width" | "height";
+  dimensions?: ("length" | "width" | "height")[];
 }
 
 // Filtros con la MISMA forma que los params de /search (alineado con ChatFilters).
