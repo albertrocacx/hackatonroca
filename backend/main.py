@@ -26,6 +26,12 @@ try:
 except Exception:  # noqa: BLE001
     azure_search = None
 
+# interpretacion NL -> filtros (LLM Foundry). Si no carga, /interpret usa el heuristico.
+try:
+    import query_interpreter
+except Exception:  # noqa: BLE001
+    query_interpreter = None
+
 # nº de vecinos a pedir a Azure. Alto para que las facetas tengan suficiente material
 # (las facetas se calculan sobre el conjunto devuelto). Configurable por entorno.
 AZURE_K = int(os.getenv("AZURE_SEARCH_K", "120"))
@@ -465,6 +471,172 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
     return {"query": q, "total": len(order),
             "results": [build_card(m) for m in order[:limit]],
             "facets": facets}
+
+
+# ---------------------------------------------------------------- interpretacion NL -> filtros
+# Vocabulario del catalogo para acotar lo que el LLM puede devolver (evita alucinaciones).
+CATEGORIES = sorted({seg.strip()
+                     for p in PRODUCTS
+                     for seg in str(p.get("category_base") or "").split("|")
+                     if seg.strip()})
+_CATEGORY_BY_NORM = {_norm(c): c for c in CATEGORIES}
+_COLLECTION_BY_NORM = {}
+for _p in PRODUCTS:
+    for _seg in str(_p.get("collection") or "").split("|"):
+        _seg = _seg.strip()
+        if _seg:
+            _COLLECTION_BY_NORM.setdefault(_norm(_seg), _seg)
+COLOR_WORDS = tuple(COLOR_LEXICON.keys())
+
+SIZE_LABEL = {"small": "pequeño", "medium": "mediano", "large": "grande"}
+_DIM_GETTER = {"length": _len_mm, "width": _wid_mm, "height": _hei_mm}
+_DIM_PARAM = {"length": ("min_length", "max_length"),
+              "width": ("min_width", "max_width"),
+              "height": ("min_height", "max_height")}
+
+
+def _category_dim_bounds(category, dimension):
+    getter = _DIM_GETTER.get(dimension)
+    if not getter or not category:
+        return None
+    prods = [p for p in PRODUCTS if _field_has(p, "category_base", category)]
+    return _bounds(prods, getter)
+
+
+def _resolve_size(category, size):
+    """Convierte {band, dimension} a un rango numerico por TERCIOS del rango real de esa
+    dimension para la categoria detectada. Devuelve (dimension, min, max) o None."""
+    if not isinstance(size, dict):
+        return None
+    band = size.get("band")
+    dim = size.get("dimension") or "length"
+    if band not in ("small", "medium", "large"):
+        return None
+    b = _category_dim_bounds(category, dim)
+    if not b or b["max"] <= b["min"]:
+        return None
+    lo, hi = b["min"], b["max"]
+    third = (hi - lo) / 3.0
+    if band == "small":
+        r = (lo, lo + third)
+    elif band == "medium":
+        r = (lo + third, lo + 2 * third)
+    else:
+        r = (lo + 2 * third, hi)
+    return dim, round(r[0]), round(r[1])
+
+
+def _price_label(mn, mx):
+    if mn is not None and mx is not None:
+        return f"{int(mn)} – {int(mx)} €"
+    if mx is not None:
+        return f"Hasta {int(mx)} €"
+    if mn is not None:
+        return f"Desde {int(mn)} €"
+    return None
+
+
+def _build_interpretation(raw, data):
+    """Resuelve la salida cruda del LLM contra el catalogo -> filtros (forma Selected) + tags."""
+    corrected_query = (data.get("corrected_query") or raw).strip() or raw
+    corrected = bool(data.get("corrected")) and _norm(corrected_query) != _norm(raw)
+
+    filters, tags = {}, []
+
+    cat = data.get("category")
+    cat = _CATEGORY_BY_NORM.get(_norm(cat)) if cat else None
+    if cat:
+        filters["category"] = cat
+        tags.append({"id": "category", "type": "category", "label": cat})
+
+    coll = data.get("collection")
+    coll = _COLLECTION_BY_NORM.get(_norm(coll)) if coll else None
+    if coll:
+        filters["collection"] = coll
+        tags.append({"id": "collection", "type": "collection", "label": coll})
+
+    color = data.get("color")
+    finishes = COLOR_LEXICON.get(_norm(color)) if color else None
+    if finishes:
+        filters["finishes"] = finishes
+        tags.append({"id": "finish", "type": "finish", "label": str(color).capitalize()})
+
+    price = data.get("price") if isinstance(data.get("price"), dict) else {}
+    mn, mx = price.get("min"), price.get("max")
+    if mn is not None or mx is not None:
+        if mn is not None:
+            filters["min_price"] = mn
+        if mx is not None:
+            filters["max_price"] = mx
+        tags.append({"id": "price", "type": "price", "label": _price_label(mn, mx)})
+
+    size = _resolve_size(cat, data.get("size"))
+    if size:
+        dim, smin, smax = size
+        pmin, pmax = _DIM_PARAM[dim]
+        filters[pmin], filters[pmax] = smin, smax
+        band = (data.get("size") or {}).get("band")
+        tags.append({"id": "size", "type": "size", "dimension": dim,
+                     "label": f"Tamaño {SIZE_LABEL.get(band, band)}"})
+
+    search_text = (data.get("search_text") or "").strip() or corrected_query
+    return {"query": raw, "corrected_query": corrected_query, "corrected": corrected,
+            "search_text": search_text, "filters": filters, "tags": tags}
+
+
+def _interpret_heuristic(raw):
+    """Fallback sin LLM: reutiliza parse_query (color + precio) para no romper nada."""
+    pq = parse_query(raw)
+    filters, tags = {}, []
+    cat = next((s["term"] for s in pq["suggestions"] if s["type"] == "category"), None)
+    cat = _CATEGORY_BY_NORM.get(_norm(cat)) if cat else None
+    if cat:
+        filters["category"] = cat
+        tags.append({"id": "category", "type": "category", "label": cat})
+    for f in pq["filters"]:
+        if f["type"] == "finish" and f.get("values"):
+            filters["finishes"] = f["values"]
+            tags.append({"id": "finish", "type": "finish", "label": f.get("label", "")})
+        elif f["type"] == "price":
+            mn, mx = f.get("min_price"), f.get("max_price")
+            if mn is not None:
+                filters["min_price"] = mn
+            if mx is not None:
+                filters["max_price"] = mx
+            tags.append({"id": "price", "type": "price", "label": _price_label(mn, mx)})
+    return {"query": raw, "corrected_query": raw, "corrected": False,
+            "search_text": pq.get("intent_phrase") or raw, "filters": filters, "tags": tags}
+
+
+# cache simple por query normalizada (evita re-llamar al LLM con la misma frase)
+_INTERPRET_CACHE = {}
+
+
+@app.get("/interpret")
+def interpret_endpoint(q: str = ""):
+    """Interpreta una frase libre -> filtros (forma Selected) + tags + correccion de erratas.
+    Pensado para llamarse SOLO al enviar la busqueda (no en cada cambio de faceta)."""
+    raw = (q or "").strip()
+    if not raw:
+        return {"query": q, "corrected_query": q, "corrected": False,
+                "search_text": "", "filters": {}, "tags": []}
+    key = _norm(raw)
+    if key in _INTERPRET_CACHE:
+        return _INTERPRET_CACHE[key]
+
+    result = None
+    if query_interpreter is not None and query_interpreter.available():
+        try:
+            data = query_interpreter.interpret(raw, tuple(CATEGORIES), COLOR_WORDS)
+            if data:
+                result = _build_interpretation(raw, data)
+        except Exception as e:  # noqa: BLE001 — LLM caido/timeout: no romper la busqueda
+            print(f"[/interpret] LLM FALLO ({e!r}) -> heuristico", flush=True)
+    if result is None:
+        result = _interpret_heuristic(raw)
+
+    _INTERPRET_CACHE[key] = result
+    return result
 
 
 # ---- chat IA (opcional): usa la MISMA search() de arriba como fuente de verdad ----
