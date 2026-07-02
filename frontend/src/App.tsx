@@ -30,6 +30,28 @@ const REL_LABELS: Record<string, string> = {
   sparepart: "Se compone de",
 };
 
+// Panel al enfocar el buscador vacío (datos fake por ahora; luego se pueden cablear
+// a un endpoint de "más buscadas").
+const POPULAR_SEARCHES = [
+  "Lavabos murales",
+  "Inodoros suspendidos Rimless",
+  "Grifería termostática de ducha",
+  "Platos de ducha extraplanos",
+  "Muebles de baño",
+  "Mamparas de ducha",
+];
+
+const POPULAR_CATEGORIES = [
+  "Lavabos",
+  "Inodoros",
+  "Grifería",
+  "Platos de ducha",
+  "Bañeras",
+  "Muebles de baño",
+  "Mamparas",
+  "Accesorios",
+];
+
 function price(p: number | null) {
   if (p == null) return null;
   return p.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -49,9 +71,10 @@ function withAutoFilters(base: Selected, filters: Filter[]): Selected {
   return s;
 }
 
-function SearchIcon() {
+function SearchIcon({ small = false }: { small?: boolean }) {
+  const s = small ? 16 : 20;
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.6">
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.6">
       <circle cx="11" cy="11" r="7" />
       <line x1="16.5" y1="16.5" x2="21" y2="21" strokeLinecap="round" />
     </svg>
@@ -179,6 +202,17 @@ export default function App() {
     setBaseText(q); setSubcat(null); setSel(s); setSubmitted(q);
     clearTimeout(debounce.current);
     runSearch(q, null, s);
+  }
+
+  // Búsqueda de texto directa desde el panel al enfocar (sugerencias más buscadas y
+  // categorías populares). Robusta: usa el motor de /search (Azure/substring).
+  function launchSearch(term: string) {
+    skipSuggest.current = true;
+    setQ(term);
+    setBaseText(term); setSubcat(null); setSel(EMPTY_SELECTED); setSubmitted(term);
+    setOpen(false);
+    clearTimeout(debounce.current);
+    runSearch(term, null, EMPTY_SELECTED);
   }
 
   function pickSuggestion(sug: Suggestion) {
@@ -318,7 +352,7 @@ export default function App() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={onKeyDown}
-              onFocus={() => (suggestions.length || autoFilters.length) && setOpen(true)}
+              onFocus={() => setOpen(true)}
               placeholder="Introduce tu búsqueda"
               aria-label="Buscar"
               autoFocus
@@ -332,7 +366,39 @@ export default function App() {
               </button>
             )}
 
-            {open && (suggestions.length > 0 || autoFilters.length > 0) && (
+            {open && q.trim() === "" && (
+              <div className="rs-suggest">
+                <div className="rs-suggest-head">Sugerencias</div>
+                {POPULAR_SEARCHES.map((term) => (
+                  <button
+                    type="button"
+                    key={term}
+                    className="rs-suggest-item rs-suggest-item--pop"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => launchSearch(term)}
+                  >
+                    <SearchIcon small />
+                    <span className="rs-suggest-term">{term}</span>
+                  </button>
+                ))}
+                <div className="rs-suggest-head">Categorías populares</div>
+                <div className="rs-pop-cats">
+                  {POPULAR_CATEGORIES.map((cat) => (
+                    <button
+                      type="button"
+                      key={cat}
+                      className="rs-pop-cat"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => launchSearch(cat)}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {open && q.trim() !== "" && (suggestions.length > 0 || autoFilters.length > 0) && (
               <div className="rs-suggest">
                 {autoFilters.length > 0 && (
                   <div className="rs-suggest-filters">
