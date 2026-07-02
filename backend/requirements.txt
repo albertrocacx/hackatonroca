@@ -1,8 +1,8 @@
-fastapi==0.138.2          # bumped from 0.115.5: claude-agent-sdk pulls starlette 1.x (via mcp)
+fastapi==0.138.2
 uvicorn[standard]==0.32.1
 numpy>=2.0
 model2vec>=0.3
-claude-agent-sdk>=0.2.110  # opcional: chat IA sobre resultados (necesita CLAUDE_CODE_OAUTH_TOKEN)
+anthropic>=0.115           # chat IA sobre resultados vía Azure AI Foundry (necesita CLAUDE_API_KEY)
 openai>=1.40               # cliente Azure OpenAI (embeddings) para /search semántico
 azure-search-documents>=11.5  # búsqueda vectorial/híbrida en Azure AI Search
 azure-core>=1.30

@@ -8,24 +8,25 @@ La recuperación va SIEMPRE a través de la búsqueda propia de la app (inyectad
 `configure`), de modo que el motor de búsqueda sigue siendo la única fuente de verdad:
 este módulo no reimplementa nada de búsqueda.
 
-Auth: necesita CLAUDE_CODE_OAUTH_TOKEN (genéralo con `claude setup-token`). Ponlo en
-backend/.env. Si falta, stream_turn emite un evento de error en lugar de llamar a Claude.
+Auth: usa la API de Anthropic desplegada en Azure AI Foundry. Necesita CLAUDE_API_KEY
+en backend/.env (o en el entorno). Si falta, stream_turn emite un evento de error en
+lugar de llamar a Claude. La API es stateless: el historial por sesión se guarda en
+memoria en este proceso (suficiente para la demo; se pierde al reiniciar).
 """
 import inspect
 import json
 import os
 import types as _types
+import uuid
 from typing import Union, get_args, get_origin
 
-from claude_agent_sdk import (
-    query, tool, create_sdk_mcp_server, ClaudeAgentOptions,
-    AssistantMessage, ResultMessage, TextBlock, ToolUseBlock,
-)
+import anthropic
+from anthropic import AsyncAnthropicFoundry
 
 
-# --- token: env o backend/.env (mini-loader para no depender de python-dotenv) ---
+# --- credenciales: env o backend/.env (mini-loader para no depender de python-dotenv) ---
 def _load_env():
-    if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+    if os.environ.get("CLAUDE_API_KEY"):
         return
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if not os.path.exists(path):
@@ -39,21 +40,30 @@ def _load_env():
 
 
 _load_env()
-OAUTH_TOKEN = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+API_KEY = os.environ.get("CLAUDE_API_KEY")
+ENDPOINT = os.environ.get(
+    "CLAUDE_ENDPOINT", "https://hackathon-us-roca-resource.services.ai.azure.com/anthropic")
+MODEL = os.environ.get("CLAUDE_DEPLOYMENT", "claude-sonnet-5")
+
+_client = AsyncAnthropicFoundry(api_key=API_KEY, base_url=ENDPOINT) if API_KEY else None
 
 GRID_TOP = 24     # productos que se vuelcan a la parrilla
 MODEL_TOP = 10    # productos que se pasan al modelo (resumir, no listar todo)
+MAX_TURNS = 12    # tope de iteraciones del bucle de tools por mensaje de usuario
+MAX_TOKENS = 4096
+MAX_SESSIONS = 200  # historiales en memoria; al superarlo se descarta el más antiguo
 
 
 # --- inyección de la búsqueda (el handler /search de main.py) ---
 # El schema de la tool se DERIVA de la firma de search(): cualquier filtro que acepte
 # (hoy o en el futuro) queda disponible para el agente sin tocar este archivo.
 _search_fn = None
-_MCP = None
-TOOLS = ["mcp__roca__search_catalog", "mcp__roca__search_manual"]
+_TOOLS = None                     # definiciones anthropic (search_catalog + search_manual)
 SEARCH_PARAMS: set[str] = set()   # todos los params de search()
 LIST_PARAMS: set[str] = set()     # los que son listas (deben enviarse como lista)
 INTERNAL_PARAMS = {"q", "limit", "include_spare"}  # no son filtros de usuario
+
+_SESSIONS: dict[str, list] = {}   # session_id -> messages (historial API)
 
 
 def _unwrap_optional(ann):
@@ -120,18 +130,24 @@ DOCTYPE_MAP = {
     "ficha_tecnica": "TechnicalFactSheet", "ficha": "TechnicalFactSheet",
 }
 
-_MANUAL_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "sku": {"type": "string",
-                "description": "SKU/código del producto (carpeta del manual), p.ej. '8S6090000'."},
-        "doctype": {"type": "string",
-                    "enum": ["UserManual", "InstallationManual", "TechnicalFactSheet"],
-                    "description": "Documento a consultar: UserManual (uso/mantenimiento), "
-                                   "InstallationManual (instalación/montaje) o TechnicalFactSheet (ficha técnica)."},
-        "question": {"type": "string", "description": "La pregunta del usuario en lenguaje natural."},
+_MANUAL_TOOL = {
+    "name": "search_manual",
+    "description": ("Responde preguntas sobre la documentación de UN producto concreto (por SKU): "
+                    "manual de usuario, guía de instalación o ficha técnica. Devuelve fragmentos y "
+                    "la URL del PDF para citarla. Requiere sku + doctype + question."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "sku": {"type": "string",
+                    "description": "SKU/código del producto (carpeta del manual), p.ej. '8S6090000'."},
+            "doctype": {"type": "string",
+                        "enum": ["UserManual", "InstallationManual", "TechnicalFactSheet"],
+                        "description": "Documento a consultar: UserManual (uso/mantenimiento), "
+                                       "InstallationManual (instalación/montaje) o TechnicalFactSheet (ficha técnica)."},
+            "question": {"type": "string", "description": "La pregunta del usuario en lenguaje natural."},
+        },
+        "required": ["sku", "doctype", "question"],
     },
-    "required": ["sku", "doctype", "question"],
 }
 
 
@@ -147,23 +163,10 @@ def search_manual_impl(sku: str, doctype: str, question: str, top: int = MANUAL_
     return {"sku": (sku or "").strip(), "doctype": dt, "count": len(results), "results": results}
 
 
-@tool("search_manual",
-      "Responde preguntas sobre la documentación de UN producto concreto (por SKU): manual de "
-      "usuario, guía de instalación o ficha técnica. Devuelve fragmentos y la URL del PDF para "
-      "citarla. Requiere sku + doctype + question.",
-      _MANUAL_SCHEMA)
-async def _search_manual_tool(args):
-    try:
-        payload = search_manual_impl(args.get("sku", ""), args.get("doctype", ""), args.get("question", ""))
-    except Exception as e:  # noqa: BLE001
-        payload = {"error": str(e)}
-    return {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]}
-
-
 def configure(search_fn):
-    """main.py inyecta su `search`. Construimos aquí (con la firma ya conocida) el schema
-    dinámico de la tool, la tool y el servidor MCP en proceso."""
-    global _search_fn, _MCP, SEARCH_PARAMS, LIST_PARAMS
+    """main.py inyecta su `search`. Construimos aquí (con la firma ya conocida) las
+    definiciones de tools para la Messages API."""
+    global _search_fn, _TOOLS, SEARCH_PARAMS, LIST_PARAMS
     _search_fn = search_fn
     sig = inspect.signature(search_fn)
     SEARCH_PARAMS = set(sig.parameters)
@@ -175,19 +178,15 @@ def configure(search_fn):
         if name in INTERNAL_PARAMS:
             continue
         props[name] = {**_json_type(p.annotation), "description": _describe(name)}
-    schema = {"type": "object", "properties": props, "required": ["query"]}
 
-    @tool("search_catalog",
-          "Busca productos en el catálogo Roca por lenguaje natural + filtros opcionales. "
-          "Los resultados se muestran automáticamente en la parrilla del usuario.",
-          schema)
-    async def _search_catalog_tool(args):
-        data = _run_search(**_search_kwargs(args, MODEL_TOP))
-        brief = [_brief_from_card(c) for c in data.get("results", [])]
-        payload = {"total": data.get("total", 0), "results": brief}
-        return {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]}
-
-    _MCP = create_sdk_mcp_server("roca", tools=[_search_catalog_tool, _search_manual_tool])
+    catalog_tool = {
+        "name": "search_catalog",
+        "description": ("Busca productos en el catálogo Roca por lenguaje natural + filtros "
+                        "opcionales. Los resultados se muestran automáticamente en la parrilla "
+                        "del usuario."),
+        "input_schema": {"type": "object", "properties": props, "required": ["query"]},
+    }
+    _TOOLS = [catalog_tool, _MANUAL_TOOL]
 
 
 def _search_kwargs(a: dict, limit: int) -> dict:
@@ -268,52 +267,100 @@ def _build_prompt(text: str, view: dict | None) -> str:
     return f"[contexto] {' | '.join(bits)}\n\n{text}" if bits else text
 
 
+def _session(session_id: str | None) -> tuple[str, list]:
+    """Recupera (o crea) el historial de la sesión, con poda del más antiguo."""
+    if session_id and session_id in _SESSIONS:
+        return session_id, _SESSIONS[session_id]
+    sid = uuid.uuid4().hex
+    while len(_SESSIONS) >= MAX_SESSIONS:
+        _SESSIONS.pop(next(iter(_SESSIONS)))
+    _SESSIONS[sid] = []
+    return sid, _SESSIONS[sid]
+
+
 async def stream_turn(text: str, session_id: str | None = None, view: dict | None = None):
     """Genera eventos de UI: {type: text|tool|grid|done|error, ...}."""
-    if not OAUTH_TOKEN:
+    if _client is None:
         yield {"type": "error",
-               "message": "CLAUDE_CODE_OAUTH_TOKEN no configurado. Ejecuta `claude setup-token`, "
-                          "añádelo a backend/.env y reinicia el servidor. La búsqueda ya funciona."}
+               "message": "CLAUDE_API_KEY no configurada. Añádela a backend/.env y reinicia "
+                          "el servidor. La búsqueda ya funciona."}
         return
-    if _MCP is None:
+    if _TOOLS is None:
         yield {"type": "error", "message": "Chat no inicializado: falta chat.configure(search)."}
         return
 
-    opts = ClaudeAgentOptions(
-        system_prompt=SYSTEM,
-        mcp_servers={"roca": _MCP},
-        allowed_tools=TOOLS,
-        permission_mode="bypassPermissions",
-        env={"CLAUDE_CODE_OAUTH_TOKEN": OAUTH_TOKEN},
-        resume=session_id,
-        max_turns=12,
-    )
+    sid, messages = _session(session_id)
+    turn_start = len(messages)  # para deshacer el turno completo si la API falla
+    messages.append({"role": "user", "content": _build_prompt(text, view)})
 
     grid_locked = False   # se bloquea tras la 1ª búsqueda CON resultados (un intento vacío no la fija)
-    async for msg in query(prompt=_build_prompt(text, view), options=opts):
-        if isinstance(msg, AssistantMessage):
-            for block in msg.content:
-                if isinstance(block, TextBlock):
-                    yield {"type": "text", "text": block.text}
-                elif isinstance(block, ToolUseBlock):
-                    short = block.name.split("__")[-1]
-                    yield {"type": "tool", "name": short}
-                    if short == "search_catalog" and not grid_locked:
+    try:
+        for _ in range(MAX_TURNS):
+            async with _client.messages.stream(
+                model=MODEL,
+                max_tokens=MAX_TOKENS,
+                system=SYSTEM,
+                tools=_TOOLS,
+                messages=messages,
+            ) as stream:
+                async for chunk in stream.text_stream:
+                    yield {"type": "text", "text": chunk}
+                response = await stream.get_final_message()
+
+            # historial: los bloques (incl. thinking/tool_use) vuelven tal cual a la API
+            messages.append({"role": "assistant", "content": response.content})
+
+            if response.stop_reason != "tool_use":
+                break
+
+            tool_results = []
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+                yield {"type": "tool", "name": block.name}
+                inp = block.input if isinstance(block.input, dict) else {}
+
+                if block.name == "search_manual":
+                    try:
+                        payload = search_manual_impl(inp.get("sku", ""), inp.get("doctype", ""),
+                                                     inp.get("question", ""))
+                    except Exception as e:  # noqa: BLE001
+                        payload = {"error": str(e)}
+                    tool_results.append({"type": "tool_result", "tool_use_id": block.id,
+                                         "content": json.dumps(payload, ensure_ascii=False)})
+                    continue
+
+                # search_catalog
+                try:
+                    data = _run_search(**_search_kwargs(inp, MODEL_TOP))
+                    brief = [_brief_from_card(c) for c in data.get("results", [])]
+                    payload = {"total": data.get("total", 0), "results": brief}
+                    tool_results.append({"type": "tool_result", "tool_use_id": block.id,
+                                         "content": json.dumps(payload, ensure_ascii=False)})
+                    if not grid_locked:
                         # mueve la parrilla: re-ejecuta la MISMA búsqueda (top 24 para la UI)
                         # y adjunta los filtros que usó el agente para reflejarlos en el sidebar.
-                        try:
-                            inp = block.input
-                            data = _run_search(**_search_kwargs(inp, GRID_TOP))
-                            # filtros = todos los args que usó el agente (menos la query), dinámico
-                            filters = {k: v for k, v in inp.items()
-                                       if k != "query" and v not in (None, "", [])}
-                            yield {"type": "grid", "query": inp.get("query"),
-                                   "filters": filters, "data": data}
-                            # solo fijamos la parrilla cuando hay resultados; si dio 0, un 2º
-                            # intento (p. ej. mejor casing) aún puede sustituirla.
-                            if data.get("total", 0) > 0:
-                                grid_locked = True
-                        except Exception as e:  # noqa: BLE001
-                            yield {"type": "tool_error", "name": short, "error": str(e)}
-        elif isinstance(msg, ResultMessage):
-            yield {"type": "done", "session_id": msg.session_id}
+                        grid = _run_search(**_search_kwargs(inp, GRID_TOP))
+                        filters = {k: v for k, v in inp.items()
+                                   if k != "query" and v not in (None, "", [])}
+                        yield {"type": "grid", "query": inp.get("query"),
+                               "filters": filters, "data": grid}
+                        # solo fijamos la parrilla cuando hay resultados; si dio 0, un 2º
+                        # intento (p. ej. mejor casing) aún puede sustituirla.
+                        if grid.get("total", 0) > 0:
+                            grid_locked = True
+                except Exception as e:  # noqa: BLE001
+                    yield {"type": "tool_error", "name": block.name, "error": str(e)}
+                    tool_results.append({"type": "tool_result", "tool_use_id": block.id,
+                                         "content": f"Error: {e}", "is_error": True})
+            messages.append({"role": "user", "content": tool_results})
+    except anthropic.APIStatusError as e:
+        del messages[turn_start:]  # no dejar el turno a medias en el historial
+        yield {"type": "error", "message": f"Error de la API de Claude ({e.status_code}): {e.message}"}
+        return
+    except anthropic.APIConnectionError:
+        del messages[turn_start:]
+        yield {"type": "error", "message": "No se pudo conectar con la API de Claude. Reintenta."}
+        return
+
+    yield {"type": "done", "session_id": sid}

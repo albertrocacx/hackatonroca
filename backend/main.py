@@ -145,7 +145,7 @@ app.add_middleware(
 def health():
     return {"status": "ok", "products": len(PRODUCTS),
             "relations_models": len(RELATIONS),
-            "chat_ready": bool(chat and chat.OAUTH_TOKEN)}
+            "chat_ready": bool(chat and chat.API_KEY)}
 
 # ---------------------------------------------------------------- query understanding
 def _resolve_price_band(band, category):
@@ -478,7 +478,7 @@ async def api_chat(body: dict):
     async def gen():
         if chat is None:
             yield json.dumps({"type": "error",
-                              "message": "Chat IA no disponible: falta claude-agent-sdk en el backend."}) + "\n"
+                              "message": "Chat IA no disponible: falta el paquete anthropic en el backend."}) + "\n"
             return
         async for ev in chat.stream_turn(body.get("text", ""),
                                          session_id=body.get("session_id"),
