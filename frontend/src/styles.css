@@ -184,6 +184,9 @@ button { font-family: inherit; }
 }
 .rs-searchbox input {
   flex: 1;
+  /* sin esto, el input no puede encogerse por debajo de su ancho intrínseco
+     y su contenido (texto largo, botón ×) se sale del cuadro al abrir el chat */
+  min-width: 0;
   border: none;
   outline: none;
   font-size: 16px;
