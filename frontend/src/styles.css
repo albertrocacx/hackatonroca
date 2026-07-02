@@ -887,3 +887,52 @@ button { font-family: inherit; }
   padding: 7px 14px; font-size: 12px; cursor: pointer;
 }
 .rs-design-tabs button.is-active { border-color: var(--ink); background: var(--ink); color: #fff; }
+
+/* ---------- comparador ---------- */
+.rs-tile-box { position: relative; }
+.rs-pick {
+  position: absolute; top: 10px; right: 10px; width: 26px; height: 26px;
+  border-radius: 50%; border: 1px solid #ccc; background: #fff;
+  color: transparent; font-size: 13px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s; z-index: 2;
+}
+.rs-pick:hover { border-color: var(--teal); }
+.rs-card.is-sel .rs-pick { background: var(--teal); border-color: var(--teal); color: #fff; }
+.rs-card.is-sel .rs-tile { outline: 2px solid var(--teal); outline-offset: -2px; }
+
+.rs-cmpbar {
+  position: fixed; left: 50%; bottom: 28px;
+  transform: translate(-50%, 180%);
+  background: var(--ink); color: #fff;
+  display: flex; align-items: center; gap: 18px;
+  padding-left: 22px; z-index: 30;
+  transition: transform .3s cubic-bezier(.2,.8,.2,1);
+  box-shadow: 0 10px 30px rgba(0,0,0,.25);
+}
+.rs-cmpbar.is-show { transform: translate(-50%, 0); }
+.rs-cmpbar > span { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+.rs-cmpbar button {
+  border: 0; cursor: pointer; padding: 15px 20px;
+  font-size: 12px; text-transform: uppercase; letter-spacing: .1em;
+  background: transparent; color: #b9b9b9;
+}
+.rs-cmpbar .rs-cmp-do { background: var(--teal); color: #fff; }
+.rs-cmpbar .rs-cmp-do:hover { filter: brightness(1.12); }
+.rs-cmpbar .rs-cmp-clr:hover { color: #fff; }
+
+.rs-panel--cmp { max-width: 1000px; }
+.rs-cmp-scroll { overflow-x: auto; margin-top: 24px; }
+.rs-cmp-table { width: 100%; min-width: 620px; border-collapse: collapse; table-layout: fixed; font-size: 14px; }
+.rs-cmp-table th { font-weight: 400; vertical-align: bottom; text-align: left; padding: 0 12px 14px 0; }
+.rs-cmp-table th:first-child, .rs-cmp-table td:first-child { width: 150px; color: var(--muted); }
+.rs-cmp-table td { border-top: 1px solid var(--line); padding: 10px 12px 10px 0; text-align: left; vertical-align: top; }
+.rs-cmp-table td b { font-size: 16px; }
+.rs-cmp-prod { border: 0; background: none; padding: 0; cursor: pointer; text-align: left; width: 100%; font: inherit; color: inherit; }
+.rs-cmp-img { display: block; aspect-ratio: 1 / 1; background: var(--tile); margin-bottom: 10px; }
+.rs-cmp-img img { width: 100%; height: 100%; object-fit: contain; mix-blend-mode: multiply; display: block; }
+.rs-cmp-title { display: block; font-size: 14px; line-height: 1.35; }
+.rs-cmp-ref { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+/* "En la cesta" es clicable: en hover avisa de que quita el producto */
+.rs-design-strip button.is-added:hover { background: #8c1d18; border-color: #8c1d18; }
