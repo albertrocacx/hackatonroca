@@ -998,6 +998,37 @@ button { font-family: inherit; }
 }
 .rs-design-img { width: 100%; display: block; background: var(--tile); }
 
+/* Comparador antes/después: el render marca el tamaño; la foto original va encima
+   recortada con clip-path hasta donde esté el divisor. */
+.rs-design-compare {
+  position: relative; width: 100%; overflow: hidden; background: var(--tile);
+  cursor: ew-resize; touch-action: none; user-select: none;
+  flex: none;   /* el padre es flex column: sin esto, flex-shrink recorta el render */
+}
+.rs-design-compare > img { width: 100%; display: block; }
+.rs-design-compare .rs-compare-before {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+}
+.rs-compare-tag {
+  position: absolute; top: 8px; pointer-events: none;
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  background: rgba(0,0,0,.55); color: #fff; padding: 4px 8px;
+  transition: opacity .15s;
+}
+.rs-compare-handle { position: absolute; top: 0; bottom: 0; width: 0; }
+.rs-compare-handle::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px;
+  background: #fff; box-shadow: 0 0 6px rgba(0,0,0,.45);
+}
+.rs-compare-handle i {
+  position: absolute; top: 50%; left: 0; transform: translate(-50%, -50%);
+  width: 34px; height: 34px; border-radius: 50%;
+  background: #fff; color: var(--ink);
+  box-shadow: 0 1px 6px rgba(0,0,0,.35);
+  display: flex; align-items: center; justify-content: center;
+}
+.rs-compare-hint { margin: -6px 0 0; }
+
 .rs-design-refine { display: flex; gap: 8px; }
 .rs-design-refine input {
   flex: 1; padding: 9px 10px; border: 1px solid var(--line); font-size: 13px;

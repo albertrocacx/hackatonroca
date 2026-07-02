@@ -71,6 +71,69 @@ function CartToggle({ inCart, onAdd, onRemove }: {
   );
 }
 
+// Comparador antes/después: las dos imágenes superpuestas y un divisor arrastrable.
+// La foto original ocupa el lado izquierdo del divisor y el render el derecho.
+function CompareSlider({ before, after }: { before: string; after: string }) {
+  const [pos, setPos] = useState(50);   // % del ancho donde está el divisor
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  function moveTo(clientX: number) {
+    const r = boxRef.current?.getBoundingClientRect();
+    if (!r || r.width === 0) return;
+    setPos(Math.min(100, Math.max(0, ((clientX - r.left) / r.width) * 100)));
+  }
+
+  return (
+    <div
+      ref={boxRef}
+      className="rs-design-compare"
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        moveTo(e.clientX);
+      }}
+      onPointerMove={(e) => { if (e.buttons & 1) moveTo(e.clientX); }}
+    >
+      <img src={after} alt="Diseño de baño generado" draggable={false} />
+      <img
+        className="rs-compare-before"
+        src={before}
+        alt="Tu baño actual"
+        draggable={false}
+        style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }}
+      />
+      <span className="rs-compare-tag" style={{ left: 8, opacity: pos < 14 ? 0 : 1 }}>
+        Antes
+      </span>
+      <span className="rs-compare-tag" style={{ right: 8, opacity: pos > 86 ? 0 : 1 }}>
+        Después
+      </span>
+      <div
+        className="rs-compare-handle"
+        style={{ left: `${pos}%` }}
+        role="slider"
+        aria-label="Comparar antes y después"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(pos)}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") { e.preventDefault(); setPos((p) => Math.max(0, p - 5)); }
+          if (e.key === "ArrowRight") { e.preventDefault(); setPos((p) => Math.min(100, p + 5)); }
+        }}
+      >
+        <i>
+          <svg width="16" height="12" viewBox="0 0 16 12" fill="none"
+               stroke="currentColor" strokeWidth="1.6"
+               strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 1 1 6l4 5" />
+            <path d="M11 1l4 5-4 5" />
+          </svg>
+        </i>
+      </div>
+    </div>
+  );
+}
+
 export default function Design({ ready, onClose }: Props) {
   const { lines, addToCart, remove } = useCart();
   const usable = lines.filter((l) => l.item.image);
@@ -84,6 +147,7 @@ export default function Design({ ready, onClose }: Props) {
   const [secs, setSecs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DesignResponse | null>(null);
+  const [before, setBefore] = useState<string | null>(null);  // foto usada en el render actual
   const [followup, setFollowup] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -134,6 +198,10 @@ export default function Design({ ready, onClose }: Props) {
     setError(null);
     try {
       setResult(await designBathroom(req));
+      // El "antes" del comparador es la foto enviada en este render. Una iteración
+      // (instruction sin skus) edita el render previo, así que conserva su "antes";
+      // un render nuevo sin foto lo limpia (no hay nada que comparar).
+      if (!(req.instruction && req.skus.length === 0)) setBefore(req.room_image ?? null);
       setFollowup("");
       setView("render");
     } catch (err) {
@@ -397,11 +465,23 @@ export default function Design({ ready, onClose }: Props) {
               )
             ) : result ? (
               <>
-                <img
-                  className="rs-design-img"
-                  src={`data:image/png;base64,${result.image_b64}`}
-                  alt="Diseño de baño generado"
-                />
+                {before ? (
+                  <>
+                    <CompareSlider
+                      before={before}
+                      after={`data:image/png;base64,${result.image_b64}`}
+                    />
+                    <p className="rs-design-hint rs-compare-hint">
+                      Arrastra el divisor para comparar tu baño con el nuevo diseño.
+                    </p>
+                  </>
+                ) : (
+                  <img
+                    className="rs-design-img"
+                    src={`data:image/png;base64,${result.image_b64}`}
+                    alt="Diseño de baño generado"
+                  />
+                )}
                 <div className="rs-design-refine">
                   <input
                     value={followup}
