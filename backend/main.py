@@ -540,6 +540,8 @@ def _image_cards(sku_scores, limit=30):
     cards = []
     for m in order[:limit]:
         variants = BY_MODEL[m]
+        # el fallback 0 es inalcanzable por construccion (best[m][1] sale del mismo
+        # BY_SKU que puebla BY_MODEL); protege solo ante datos inconsistentes futuros
         default = next((i for i, v in enumerate(variants) if v["sku"] == best[m][1]), 0)
         rep = variants[default]
         cards.append({"model": m, "title": rep.get("title"),
