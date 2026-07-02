@@ -237,9 +237,8 @@ if azure_search is not None:
                            collections=_vocab_of("collection"))
 
 def price_type_of(p):
-    pt = p.get("price_type") or p.get("PriceType")
-    if pt in ("OnlineFrom", "PVPR"):
-        return pt
+    # El CTA de compra depende SOLO del flag `ecommerce` del catálogo:
+    # ecommerce=true -> "OnlineFrom" (Compra online); si no -> "PVPR" (Dónde comprar).
     return "OnlineFrom" if p.get("ecommerce") else "PVPR"
 
 
@@ -250,6 +249,19 @@ def summary(p):
         "price_rrp": p.get("price_rrp"), "price_type": price_type_of(p),
         "is_spare_part": p.get("is_spare_part"),
         "image": IMAGES.get(p["sku"]), "dims": dims_str(p),
+    }
+
+
+def cart_item(sku):
+    """ShopItem (forma que consume el carrito del frontend) a partir de un SKU, o None
+    si no existe. `online` sigue el flag `ecommerce` (price_type=OnlineFrom)."""
+    p = BY_SKU.get(sku)
+    if not p:
+        return None
+    return {
+        "sku": p["sku"], "title": p.get("title"), "image": IMAGES.get(p["sku"]),
+        "price_rrp": p.get("price_rrp"), "finish": p.get("finish"),
+        "collection": p.get("collection"), "online": price_type_of(p) == "OnlineFrom",
     }
 
 @asynccontextmanager
@@ -1032,7 +1044,7 @@ def search_image(images: list[UploadFile] = File(...),
 
 # ---- chat IA (opcional): usa la MISMA search() de arriba como fuente de verdad ----
 if chat is not None:
-    chat.configure(search)
+    chat.configure(search, cart_item)
 
 # ---- "Diseña tu baño" (opcional): renders IA sobre los índices del catálogo ----
 if design is not None:

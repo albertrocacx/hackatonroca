@@ -58,7 +58,8 @@ MAX_SESSIONS = 200  # historiales en memoria; al superarlo se descarta el más a
 # El schema de la tool se DERIVA de la firma de search(): cualquier filtro que acepte
 # (hoy o en el futuro) queda disponible para el agente sin tocar este archivo.
 _search_fn = None
-_TOOLS = None                     # definiciones anthropic (search_catalog + search_manual)
+_cart_fn = None                   # sku -> ShopItem dict (o None); inyectado por main.py
+_TOOLS = None                     # definiciones anthropic (search_catalog + search_manual + add_to_cart)
 SEARCH_PARAMS: set[str] = set()   # todos los params de search()
 LIST_PARAMS: set[str] = set()     # los que son listas (deben enviarse como lista)
 INTERNAL_PARAMS = {"q", "limit", "include_spare", "auto"}  # no son filtros de usuario
@@ -111,11 +112,14 @@ def _describe(name: str) -> str:
 
 def _brief_from_card(c: dict) -> dict:
     """Los resultados son tarjetas-modelo (agrupadas por modelo con variantes);
-    resume cada una por su variante por defecto."""
+    resume cada una por su variante por defecto. `online` = comprable online (flag
+    `ecommerce` del catálogo, que el backend expone como price_type=OnlineFrom); si no,
+    solo disponible en punto de venta ('dónde comprar')."""
     variants = c.get("variants") or []
     v = variants[c.get("default", 0)] if variants else {}
     return {"sku": v.get("sku"), "title": c.get("title"), "collection": c.get("collection"),
-            "finish": v.get("finish"), "price_rrp": v.get("price_rrp")}
+            "finish": v.get("finish"), "price_rrp": v.get("price_rrp"),
+            "online": v.get("price_type") == "OnlineFrom"}
 
 
 # --- Tool de documentación: preguntas sobre el manual/guía de UN producto (SKU) concreto ---
@@ -192,11 +196,29 @@ def search_manual_impl(sku: str, doctype: str, question: str, top: int = MANUAL_
     return payload
 
 
-def configure(search_fn):
-    """main.py inyecta su `search`. Construimos aquí (con la firma ya conocida) las
-    definiciones de tools para la Messages API."""
-    global _search_fn, _TOOLS, SEARCH_PARAMS, LIST_PARAMS
+_CART_TOOL = {
+    "name": "add_to_cart",
+    "description": ("Añade a la cesta de compra ONLINE un producto por su SKU y abre la cesta "
+                    "en pantalla. Úsala SOLO cuando el usuario pida comprar o añadir a la cesta "
+                    "un producto concreto. Requiere que el producto se venda online: si no, la "
+                    "tool devuelve un error indicándolo (el usuario tendría que usar 'Dónde "
+                    "comprar'). Usa el SKU exacto de un resultado o del [contexto]."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "sku": {"type": "string", "description": "SKU exacto del producto a añadir a la cesta."},
+        },
+        "required": ["sku"],
+    },
+}
+
+
+def configure(search_fn, cart_fn=None):
+    """main.py inyecta su `search` (y opcionalmente `cart_fn`: sku -> ShopItem). Construimos
+    aquí (con la firma ya conocida) las definiciones de tools para la Messages API."""
+    global _search_fn, _cart_fn, _TOOLS, SEARCH_PARAMS, LIST_PARAMS
     _search_fn = search_fn
+    _cart_fn = cart_fn
     sig = inspect.signature(search_fn)
     SEARCH_PARAMS = set(sig.parameters)
     LIST_PARAMS = {n for n, p in sig.parameters.items() if _is_list_ann(p.annotation)}
@@ -216,6 +238,8 @@ def configure(search_fn):
         "input_schema": {"type": "object", "properties": props, "required": ["query"]},
     }
     _TOOLS = [catalog_tool, _MANUAL_TOOL]
+    if cart_fn is not None:
+        _TOOLS.append(_CART_TOOL)
 
 
 def _search_kwargs(a: dict, limit: int) -> dict:
@@ -247,6 +271,11 @@ parrilla automáticamente, así que no listes todos: resume y señala la parrill
 tienes algunas opciones a la izquierda").
 - search_manual: responder preguntas sobre la documentación de UN producto concreto (por \
 SKU): manual de usuario, guía de instalación o ficha técnica.
+- add_to_cart: añade un producto a la cesta de compra online (por SKU) y abre la cesta. \
+Úsala cuando el usuario pida comprar/añadir a la cesta un producto concreto. Solo funciona \
+si el producto se vende online (`online`=true); si devuelve error porque no se vende online, \
+NO insistas: dile al usuario que ese producto solo está disponible en punto de venta y que \
+use "Dónde comprar". Tras añadirlo, confírmalo brevemente ("Lo he añadido a tu cesta").
 
 REGLA DE BÚSQUEDA (impórtate mucho):
 - Puedes hacer VARIAS llamadas a search_catalog en el mismo turno para refinar: probar \
@@ -283,7 +312,11 @@ Si los fragmentos no contienen la respuesta, dilo claramente (no inventes).
 
 Comportamiento:
 - Responde en el idioma del usuario (español por defecto). Sé concreto y breve.
-- Los precios son PVPR en EUR. Cita atributos reales; si falta un dato, dilo.
+- Los precios están en EUR. Cita atributos reales; si falta un dato, dilo.
+- DISPONIBILIDAD DE COMPRA: cada resultado trae `online`. Si `online` es true, el producto \
+se puede comprar ONLINE (en la ficha aparece el botón "Compra online"). Si es false, NO se \
+vende online: solo en punto de venta, y el usuario debe usar "Dónde comprar" para localizar \
+un distribuidor. No digas que algo se compra online si `online` es false, ni al revés.
 - Cuando el usuario diga "estos", "los que se ven", usa el contexto [contexto] de SKUs \
 mostrados. Ofrece afinar o comparar."""
 
@@ -345,6 +378,11 @@ def _manual_label(inp: dict) -> str:
     doc = _DOCTYPE_LABEL.get(inp.get("doctype"), "la documentación")
     sku = inp.get("sku")
     return f"Consultando {doc} del producto {sku}" if sku else f"Consultando {doc}"
+
+
+def _cart_label(inp: dict) -> str:
+    sku = inp.get("sku")
+    return f"Añadiendo {sku} a la cesta" if sku else "Añadiendo a la cesta"
 
 
 def _build_prompt(text: str, view: dict | None) -> str:
@@ -412,8 +450,30 @@ async def stream_turn(text: str, session_id: str | None = None, view: dict | Non
                 if block.type != "tool_use":
                     continue
                 inp = block.input if isinstance(block.input, dict) else {}
-                label = _manual_label(inp) if block.name == "search_manual" else _search_label(inp)
+                if block.name == "search_manual":
+                    label = _manual_label(inp)
+                elif block.name == "add_to_cart":
+                    label = _cart_label(inp)
+                else:
+                    label = _search_label(inp)
                 yield {"type": "tool", "name": block.name, "label": label}
+
+                if block.name == "add_to_cart":
+                    item = _cart_fn(inp.get("sku", "")) if _cart_fn else None
+                    if item is None:
+                        payload = {"ok": False, "reason": "SKU no encontrado en el catálogo."}
+                    elif not item.get("online"):
+                        payload = {"ok": False, "online": False,
+                                   "reason": "Este producto no se vende online; el usuario debe "
+                                             "usar 'Dónde comprar' para localizar un distribuidor."}
+                    else:
+                        yield {"type": "cart", "item": item}   # el frontend lo añade y abre la cesta
+                        payload = {"ok": True, "added": item.get("sku"),
+                                   "title": item.get("title"),
+                                   "note": "Producto añadido a la cesta; la cesta se ha abierto."}
+                    tool_results.append({"type": "tool_result", "tool_use_id": block.id,
+                                         "content": json.dumps(payload, ensure_ascii=False)})
+                    continue
 
                 if block.name == "search_manual":
                     try:

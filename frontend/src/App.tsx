@@ -504,6 +504,9 @@ export default function App() {
             height: { min: f.min_height ?? null, max: f.max_height ?? null },
           });
           setMessages((m) => [...m, { role: "note", text: "Resultados actualizados ←" }]);
+        } else if (ev.type === "cart") {
+          addToCart(ev.item);                       // añade y abre el cajón de la cesta
+          setMessages((m) => [...m, { role: "note", text: `Añadido a la cesta: ${ev.item.title ?? ev.item.sku}` }]);
         } else if (ev.type === "done") {
           if (ev.session_id) sessionId.current = ev.session_id;
         } else if (ev.type === "error") {
