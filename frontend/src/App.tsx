@@ -10,7 +10,7 @@ import ProductCta from "./ProductCta";
 import Design from "./Design";
 import {
   search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED, searchByImage,
-  type ProductSummary, type ProductDetail, type Suggestion, type Filter,
+  type ProductSummary, type ProductDetail, type Suggestion, type Filter, type AppliedTag,
   type Selected, type Facets as FacetsData, type ModelCard, type ShopItem,
   type ImageSearchGroup,
   type SortKey,
@@ -159,6 +159,14 @@ export default function App() {
   const [sort, setSort] = useState<SortKey>("relevance");
   const debounce = useRef<number | undefined>(undefined);
 
+  // --- filtros en móvil (el sidebar se pliega bajo un botón "Filtros") ---
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // --- interpretacion NL -> filtros aplicados (tags + sidebar) ---
+  const [appliedTags, setAppliedTags] = useState<AppliedTag[]>([]);
+  const [tagsHidden, setTagsHidden] = useState(false);
+  const [correction, setCorrection] = useState<{ from: string; to: string } | null>(null);
+
   // --- autocompletado ---
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [autoFilters, setAutoFilters] = useState<Filter[]>([]);
@@ -221,16 +229,33 @@ export default function App() {
       if (auto && r.auto) {
         const a = r.auto.applied;
         if (Object.keys(a).length > 0) {
+          const dims = a.size?.dims ?? {};
+          const rangeOf = (d?: { min: number | null; max: number | null }, prev?: { min: number | null; max: number | null }) =>
+            d ? { min: d.min ?? null, max: d.max ?? null } : prev!;
           setSel({
             ...s,
             categories: a.category ?? s.categories,
             collections: a.collection ?? s.collections,
             finishes: a.finish ?? s.finishes,
             price: { min: a.min_price ?? s.price.min, max: a.max_price ?? s.price.max },
+            length: rangeOf(dims.length, s.length),
+            width: rangeOf(dims.width, s.width),
+            height: rangeOf(dims.height, s.height),
           });
         }
         if (a.sort) setSort(a.sort);
         if (r.auto.search_text) setBaseText(r.auto.search_text);
+        setAppliedTags(r.auto.tags ?? []); setTagsHidden(false);
+        const corrected = r.auto.corrected && r.auto.corrected_query;
+        setCorrection(corrected ? { from: text, to: r.auto.corrected_query! } : null);
+        if (corrected) setSubmitted(r.auto.corrected_query!);
+        // traza reducida para la demo: qué entendió el intérprete de la frase
+        console.groupCollapsed(`%c[interpret] "${text}"`, "color:#1c5c6e;font-weight:bold");
+        console.log("texto de búsqueda:", r.auto.search_text);
+        console.log("filtros aplicados:", a);
+        console.log("tags:", r.auto.tags ?? []);
+        if (corrected) console.log("corrección:", text, "->", r.auto.corrected_query);
+        console.groupEnd();
       }
     } catch (err) {
       setError(String(err));
@@ -292,28 +317,35 @@ export default function App() {
     }
   }
 
-  // Nueva búsqueda desde el buscador: fija SCOPE y resetea facetas (semilla = filtros auto)
-  // y orden (el LLM puede volver a fijarlo si la query lo pide).
+  // Nueva búsqueda desde el buscador: con fotos manda la imagen; si no, /search?auto=1
+  // interpreta la frase en el backend (erratas, filtros, tamaño, orden) en UNA llamada
+  // y la respuesta fija sidebar, tags y banner de corrección (en runSearch).
   function doSearch(e: FormEvent) {
     e.preventDefault();
-    if (photos.length > 0) { runImageSearch(q); return; }
+    if (photos.length > 0) {
+      setAppliedTags([]); setCorrection(null);   // en modo imagen no hay tags NL
+      runImageSearch(q);
+      return;
+    }
     if (!q.trim()) return;
     const s = withAutoFilters(EMPTY_SELECTED, autoFilters);
     setBaseText(q); setSubcat(null); setSel(s); setSubmitted(q); setSort("relevance");
+    setAppliedTags([]); setCorrection(null); setTagsHidden(false);
     clearTimeout(debounce.current);
     runSearch(q, null, s, true, "relevance");
   }
 
-  // Búsqueda de texto directa desde el panel al enfocar (sugerencias más buscadas y
-  // categorías populares). Robusta: usa el motor de /search (Azure/substring).
-  function launchSearch(term: string) {
+  // Búsqueda de texto desde el panel al enfocar (interpretada) o desde el enlace
+  // "buscar en su lugar por…" del banner (literal=true: sin reinterpretar, para que
+  // el LLM no vuelva a "corregir" lo que el usuario pidió literalmente).
+  function launchSearch(term: string, literal = false) {
     skipSuggest.current = true;
     setQ(term);
     setBaseText(term); setSubcat(null); setSel(EMPTY_SELECTED); setSubmitted(term);
     setSort("relevance");
-    setOpen(false);
+    setAppliedTags([]); setCorrection(null); setTagsHidden(false); setOpen(false);
     clearTimeout(debounce.current);
-    runSearch(term, null, EMPTY_SELECTED, true, "relevance");
+    runSearch(term, null, EMPTY_SELECTED, !literal, "relevance");
   }
 
   function pickSuggestion(sug: Suggestion) {
@@ -327,13 +359,54 @@ export default function App() {
     const s = withAutoFilters(base, autoFilters);
     const label = [sug.term, ...autoFilters.map((f) => f.label)].filter(Boolean).join(" · ");
     setBaseText(""); setSubcat(sc); setSel(s); setSubmitted(label); setSort("relevance");
+    setAppliedTags([]); setCorrection(null);
     clearTimeout(debounce.current);
     runSearch("", sc, s, false, "relevance");
   }
 
-  // Cambio en el sidebar: actualiza selección, mantiene SCOPE, re-busca con debounce
+  // ¿Sigue activo en la selección el filtro que representa este tag?
+  function tagActive(tag: AppliedTag, s: Selected): boolean {
+    switch (tag.id) {
+      case "category": return s.categories.length > 0;
+      case "collection": return s.collections.length > 0;
+      case "finish": return s.finishes.length > 0;
+      case "price": return s.price.min != null || s.price.max != null;
+      case "size":
+        return (tag.dimensions ?? []).some((d) => s[d].min != null || s[d].max != null);
+      default: return true;
+    }
+  }
+
+  // Quita un tag concreto: limpia esa parte de la selección y re-busca.
+  function removeTag(tag: AppliedTag) {
+    const next: Selected = {
+      ...sel,
+      categories: [...sel.categories], collections: [...sel.collections], finishes: [...sel.finishes],
+      price: { ...sel.price }, length: { ...sel.length }, width: { ...sel.width }, height: { ...sel.height },
+    };
+    if (tag.id === "category") next.categories = [];
+    else if (tag.id === "collection") next.collections = [];
+    else if (tag.id === "finish") next.finishes = [];
+    else if (tag.id === "price") next.price = { min: null, max: null };
+    else if (tag.id === "size") for (const d of tag.dimensions ?? []) next[d] = { min: null, max: null };
+    setSel(next);
+    setAppliedTags((t) => t.filter((x) => x.id !== tag.id));
+    clearTimeout(debounce.current);
+    runSearch(baseText, subcat, next);
+  }
+
+  // Limpia todos los filtros aplicados (mantiene el texto/SCOPE de la búsqueda).
+  function clearAllFilters() {
+    setSel(EMPTY_SELECTED);
+    setAppliedTags([]);
+    clearTimeout(debounce.current);
+    runSearch(baseText, subcat, EMPTY_SELECTED);
+  }
+
+  // Cambio en el sidebar: actualiza selección, reconcilia tags, mantiene SCOPE y re-busca
   function onFacetsChange(next: Selected) {
     setSel(next);
+    setAppliedTags((tags) => tags.filter((t) => tagActive(t, next)));
     clearTimeout(debounce.current);
     debounce.current = window.setTimeout(() => runSearch(baseText, subcat, next), 220);
   }
@@ -452,6 +525,13 @@ export default function App() {
     setChatStatus(null);
   }
 
+  // nº de filtros activos, para el badge del botón "Filtros" en móvil
+  const rangeOn = (r: { min: number | null; max: number | null }) =>
+    r.min != null || r.max != null ? 1 : 0;
+  const activeFilters =
+    sel.categories.length + sel.collections.length + sel.finishes.length +
+    rangeOn(sel.price) + rangeOn(sel.length) + rangeOn(sel.width) + rangeOn(sel.height);
+
   return (
     <>
       <div className={`rs-app${aiOpen ? " rs-app--chat" : ""}`}>
@@ -471,7 +551,9 @@ export default function App() {
               if (e.dataTransfer.files.length) addPhotos(e.dataTransfer.files);
             }}
           >
-            <SearchIcon />
+            <button type="submit" className="rs-search-ico" aria-label="Buscar">
+              <SearchIcon />
+            </button>
             {photos.map((p) => (
               <span key={p.id} className="rs-photo-chip">
                 <img src={p.url} alt="" />
@@ -582,9 +664,9 @@ export default function App() {
             )}
           </div>
           <button type="submit" className="rs-search-btn">Buscar</button>
-          <button type="button" className="rs-ai-btn" onClick={openAI} title="Buscar y conversar con IA">
+          <button type="button" className="rs-ai-btn" onClick={openAI} title="Buscar y conversar con IA" aria-label="Búsqueda IA">
             <SparkIcon />
-            <span>Búsqueda IA</span>
+            <span className="rs-ai-label">Búsqueda IA</span>
           </button>
         </form>
         <button
@@ -615,13 +697,69 @@ export default function App() {
       <div className="rs-layout">
         {facets && total !== null && total > 0 && (
           <aside className="rs-sidebar">
-            <Facets facets={facets} selected={sel} onChange={onFacetsChange} />
+            <button
+              type="button"
+              className="rs-filters-toggle"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+            >
+              <span>Filtros{activeFilters > 0 ? ` (${activeFilters})` : ""}</span>
+              <span className="fac-chev">{filtersOpen ? "⌃" : "⌄"}</span>
+            </button>
+            <div className={`rs-sidebar-body${filtersOpen ? " is-open" : ""}`}>
+              <Facets facets={facets} selected={sel} onChange={onFacetsChange} />
+            </div>
           </aside>
         )}
 
         <main className="rs-main">
           {loading && <p className="rs-state">Buscando…</p>}
           {error && <p className="rs-state rs-error">{error}</p>}
+
+          {!loading && appliedTags.length > 0 && (
+            <div className="rs-filters-bar">
+              <button
+                type="button"
+                className="rs-tagsbar-toggle"
+                onClick={() => setTagsHidden((h) => !h)}
+              >
+                {tagsHidden ? "Mostrar filtros →" : "Ocultar filtros ←"}
+              </button>
+              {!tagsHidden && (
+                <>
+                  {appliedTags.map((t) => (
+                    <span key={t.id} className={`rs-filter-tag rs-filter-tag--${t.type}`}>
+                      {t.label}
+                      <button
+                        type="button"
+                        className="rs-filter-tag-x"
+                        aria-label={`Quitar ${t.label}`}
+                        onClick={() => removeTag(t)}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <button type="button" className="rs-filters-clear" onClick={clearAllFilters}>
+                    Limpiar todos los filtros
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {!loading && correction && (
+            <p className="rs-correction">
+              Mostrando resultados para <b>{correction.to}</b>. Buscar en su lugar por{" "}
+              <button
+                type="button"
+                className="rs-correction-link"
+                onClick={() => launchSearch(correction.from, true)}
+              >
+                {correction.from}
+              </button>
+            </p>
+          )}
 
           {!loading && total !== null && (
             <h1 className="rs-count">{submitted} <span>({total})</span></h1>

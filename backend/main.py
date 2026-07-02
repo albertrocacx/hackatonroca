@@ -161,12 +161,14 @@ MAIN_COLORS = [
     ("Beige",    ["beige", "cream", "arena"], []),
     ("Madera",   ["roble", "fresno", "nogal", "abedul", "aliso", "cedro", "cerezo", "olmo",
                   "madera", "teka", "wenge", "decapado"], []),
-    ("Marrón",   ["moka", "cafe", "nogal", "wenge"], []),
+    ("Marrón",   ["moka", "cafe", "nogal", "wenge", "brown"], []),
     ("Rojo",     ["roj", "red", "terracota"], []),
+    ("Naranja",  ["naranja", "orange"], []),
     ("Azul",     ["azul", "blue"], []),
     ("Verde",    ["verde", "green"], []),
     ("Amarillo", ["amarill", "yellow"], []),
     ("Rosa",     ["rosa", "pink"], []),
+    ("Morado",   ["morado", "purpur", "purple", "violet", "lila"], []),
     ("Dorado",   ["oro", "dorad", "gold"], []),
     ("Plateado", ["plata", "silver", "niquel", "nickel"],
                  ["Acero inoxidable", "Acero inoxidable pulido", "Acabado acero inoxidable"]),
@@ -568,6 +570,39 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
             if sort not in SORT_KEYS and analysis.get("sort"):
                 sort_key = analysis["sort"]
                 auto_applied["sort"] = sort_key
+            # precio cualitativo ("baratos"): banda p25/p75 de la PRIMERA categoría
+            # detectada (o global), solo sin precio explícito. Mejor de ambas ramas:
+            # filtra a la banda Y ordena asc/desc si la query no pidió otro orden.
+            band = analysis.get("price_band")
+            if band and min_price is None and max_price is None:
+                pf = _resolve_price_band_named(band, (category or [None])[0])
+                if "min_price" in pf:
+                    min_price = pf["min_price"]
+                    auto_applied["min_price"] = min_price
+                if "max_price" in pf:
+                    max_price = pf["max_price"]
+                    auto_applied["max_price"] = max_price
+                if pf:
+                    auto_applied["price_band"] = band
+                    if sort not in SORT_KEYS and not analysis.get("sort") and band != "mid":
+                        sort_key = "price_asc" if band == "cheap" else "price_desc"
+                        auto_applied["sort"] = sort_key
+            # tamaño cualitativo ("grande"): percentiles p33/p66 por dimensión de la categoría
+            sband = analysis.get("size")
+            if sband and category:
+                dims_applied = {}
+                for dim, smin, smax in _resolve_size_multi(category[0], sband):
+                    if dim == "length" and min_length is None and max_length is None:
+                        min_length, max_length = smin, smax
+                    elif dim == "width" and min_width is None and max_width is None:
+                        min_width, max_width = smin, smax
+                    elif dim == "height" and min_height is None and max_height is None:
+                        min_height, max_height = smin, smax
+                    else:
+                        continue
+                    dims_applied[dim] = {"min": smin, "max": smax}
+                if dims_applied:
+                    auto_applied["size"] = {"band": sband, "dims": dims_applied}
             if auto_applied:
                 print(f"[/search] auto-filtros {auto_applied!r} "
                       f"(texto: {analysis['search_text']!r})", flush=True)
@@ -669,7 +704,7 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
     # familia). Relajación progresiva: se retira primero lo INFERIDO (categoría) y al final
     # lo que el usuario pidió con palabras (precio, color), re-filtrando tras cada retirada.
     if not matched and auto_applied:
-        for key in ("category", "collection", "min_price", "max_price", "finish"):
+        for key in ("category", "collection", "size", "min_price", "max_price", "finish"):
             if key not in auto_applied:
                 continue
             if key == "category":
@@ -678,9 +713,13 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
                 sel["collections"] = []
             elif key == "finish":
                 sel["finishes"] = []
+            elif key == "size":
+                sel["length"] = sel["width"] = sel["height"] = (None, None)
             else:
                 lo, hi = sel["price"]
                 sel["price"] = (None, hi) if key == "min_price" else (lo, None)
+                # sin uno de sus extremos, la etiqueta de banda ("Barato") ya no es cierta
+                auto_applied.pop("price_band", None)
             del auto_applied[key]
             matched = [(s, p) for (s, p) in scope if matches(p, sel)]
             print(f"[/search] auto-filtro '{key}' retirado (0 resultados); "
@@ -762,11 +801,118 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
             "results": [build_card(m) for m in order[:limit]],
             "facets": facets}
     if auto:
-        # lo que el intérprete aplicó de verdad (tras el salvavidas de 0 resultados) y el
-        # texto "limpio" de producto, para que el frontend fije sidebar y próximas consultas.
+        # lo que el intérprete aplicó de verdad (tras el salvavidas de 0 resultados), el
+        # texto "limpio" de producto para próximas consultas, los tags para la barra de
+        # filtros y la corrección de erratas para el banner "Mostrando resultados para…".
+        corrected_query = analysis["corrected_query"] if analysis else q_clean
         resp["auto"] = {"search_text": analysis["search_text"] if analysis else q_clean,
-                        "applied": auto_applied}
+                        "applied": auto_applied,
+                        "tags": _auto_tags(auto_applied, analysis or {}),
+                        "corrected_query": corrected_query,
+                        "corrected": bool(analysis) and _norm(corrected_query) != _norm(q_clean)}
     return resp
+
+
+# --------------------------------------------- precio y tamaño cualitativos ("barato", "grande")
+# Portados de la rama feat/nl-search-filters: resuelven las bandas contra la distribución
+# REAL de la categoría (percentiles), no con umbrales fijos.
+SIZE_LABEL = {"small": "pequeño", "medium": "mediano", "large": "grande"}
+_DIM_GETTER = {"length": _len_mm, "width": _wid_mm, "height": _hei_mm}
+_DIM_PARAM = {"length": ("min_length", "max_length"),
+              "width": ("min_width", "max_width"),
+              "height": ("min_height", "max_height")}
+
+
+def _category_products(category):
+    return [p for p in PRODUCTS if _field_has(p, "category_base", category)]
+
+
+def _category_dim_percentiles(products, dimension):
+    """min, p33, p66, max (y cobertura) de una dimension para un conjunto de productos.
+    None si no hay valores. La cobertura es la fraccion de productos con valor numerico."""
+    getter = _DIM_GETTER.get(dimension)
+    if not getter or not products:
+        return None
+    vals = [v for v in (getter(p) for p in products) if v is not None]
+    if not vals:
+        return None
+    arr = np.array(vals, dtype="float64")
+    return {"min": float(arr.min()), "p33": float(np.percentile(arr, 33)),
+            "p66": float(np.percentile(arr, 66)), "max": float(arr.max()),
+            "coverage": len(vals) / len(products)}
+
+
+def _resolve_size_multi(category, band):
+    """Para cada dimension RELEVANTE de la categoria (cobertura >=40% y con variacion),
+    reparte por tercios de PERCENTIL: small=[min,p33], medium=[p33,p66], large=[p66,max].
+    Devuelve [(dimension, min, max), ...] (vacio si no hay dims relevantes)."""
+    if band not in ("small", "medium", "large") or not category:
+        return []
+    prods = _category_products(category)
+    out = []
+    for dim in ("length", "width", "height"):
+        pc = _category_dim_percentiles(prods, dim)
+        if not pc or pc["coverage"] < 0.4 or pc["p66"] <= pc["p33"]:
+            continue
+        if band == "small":
+            r = (pc["min"], pc["p33"])
+        elif band == "medium":
+            r = (pc["p33"], pc["p66"])
+        else:
+            r = (pc["p66"], pc["max"])
+        out.append((dim, round(r[0]), round(r[1])))
+    return out
+
+
+PRICE_BAND_LABEL = {"cheap": "Barato", "mid": "Gama media", "expensive": "Caro"}
+
+
+def _resolve_price_band_named(name, category):
+    """Precio cualitativo -> min/max usando las bandas p25/p75 de la categoria (o global).
+    cheap=<=p25, expensive=>=p75, mid=[p25,p75]. Devuelve dict de filtros o {}."""
+    if name not in ("cheap", "mid", "expensive"):
+        return {}
+    b = PRICE_BANDS.get(category) or PRICE_BANDS["__global__"]
+    if name == "cheap":
+        return {"max_price": b["p25"]}
+    if name == "expensive":
+        return {"min_price": b["p75"]}
+    return {"min_price": b["p25"], "max_price": b["p75"]}
+
+
+def _price_label(mn, mx):
+    if mn is not None and mx is not None:
+        return f"{int(mn)} – {int(mx)} €"
+    if mx is not None:
+        return f"Hasta {int(mx)} €"
+    if mn is not None:
+        return f"Desde {int(mn)} €"
+    return None
+
+
+def _auto_tags(applied, analysis):
+    """Chips de los filtros que aplicó el intérprete (barra de tags del frontend).
+    El orden no lleva tag: tiene su propio selector en la parrilla."""
+    tags = []
+    if applied.get("category"):
+        tags.append({"id": "category", "type": "category",
+                     "label": " · ".join(applied["category"])})
+    if applied.get("collection"):
+        tags.append({"id": "collection", "type": "collection",
+                     "label": " · ".join(applied["collection"])})
+    if applied.get("finish"):
+        terms = [t.capitalize() for t in (analysis.get("finish_terms") or []) if t]
+        tags.append({"id": "finish", "type": "finish",
+                     "label": " · ".join(terms) or "Color"})
+    if applied.get("min_price") is not None or applied.get("max_price") is not None:
+        label = (PRICE_BAND_LABEL.get(applied.get("price_band"))
+                 or _price_label(applied.get("min_price"), applied.get("max_price")))
+        tags.append({"id": "price", "type": "price", "label": label})
+    if applied.get("size"):
+        s = applied["size"]
+        tags.append({"id": "size", "type": "size", "dimensions": sorted(s["dims"]),
+                     "label": f"Tamaño {SIZE_LABEL.get(s['band'], s['band'])}"})
+    return tags
 
 
 # ---------------------------------------------------------------- búsqueda por imagen

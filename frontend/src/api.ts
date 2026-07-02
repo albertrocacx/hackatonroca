@@ -94,6 +94,14 @@ export interface Facets {
 // Orden de la parrilla (lo aplica el backend sobre el total, antes del limit)
 export type SortKey = "relevance" | "price_asc" | "price_desc" | "alpha_asc" | "alpha_desc";
 
+// Tag visual de un filtro aplicado por el intérprete (chips sobre la parrilla).
+export interface AppliedTag {
+  id: "category" | "collection" | "finish" | "price" | "size";
+  type: string;
+  label: string;
+  dimensions?: ("length" | "width" | "height")[];
+}
+
 // Filtros que el intérprete LLM del backend aplicó a una búsqueda auto=true
 // (solo los que el usuario no fijó; valores exactos del catálogo, listos para el sidebar).
 export interface AutoApplied {
@@ -102,6 +110,8 @@ export interface AutoApplied {
   collection?: string[];
   min_price?: number;
   max_price?: number;
+  price_band?: "cheap" | "mid" | "expensive";
+  size?: { band: string; dims: Partial<Record<"length" | "width" | "height", RangeSel>> };
   sort?: SortKey;
 }
 
@@ -111,7 +121,13 @@ export interface SearchResponse {
   total: number;
   results: ModelCard[];
   facets: Facets;
-  auto?: { search_text: string; applied: AutoApplied };
+  auto?: {
+    search_text: string;
+    applied: AutoApplied;
+    tags?: AppliedTag[];
+    corrected_query?: string;
+    corrected?: boolean;
+  };
 }
 
 // ---- Selección del sidebar ----

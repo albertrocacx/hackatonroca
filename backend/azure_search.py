@@ -117,9 +117,10 @@ def set_vocab(finishes=(), categories=(), collections=()):
 _ANALYZE_RULES = """Eres el intérprete de consultas de un buscador de productos de baño y cocina (Roca).
 Corrige las erratas y separa QUÉ producto se busca de QUÉ atributos filtrables se piden.
 Responde SOLO con un JSON válido, sin markdown ni explicaciones, con EXACTAMENTE esta forma:
-{"keywords": "...", "search_text": "...", "finish_terms": [], "attr_terms": [], "finish": [], "category": [], "collection": [], "min_price": null, "max_price": null, "sort": null}
+{"keywords": "...", "corrected_query": "...", "search_text": "...", "finish_terms": [], "attr_terms": [], "finish": [], "category": [], "collection": [], "min_price": null, "max_price": null, "price_band": null, "size": null, "sort": null}
 
 - keywords: TODAS las palabras clave corregidas (producto, color, material, forma), en minúsculas ("lababo negro" -> "lavabo negro").
+- corrected_query: la frase COMPLETA del usuario con las erratas corregidas, mismas palabras y orden, sin traducir ("patos de ducha blancos" -> "platos de ducha blancos"). Si no hay erratas, la frase tal cual.
 - search_text: SOLO el producto y sus cualidades NO mapeadas a filtros (tipo, forma, uso), en minúsculas. NUNCA vacío: como mínimo el tipo de producto. Si un color/material no encaja con ningún ACABADO de la lista, consérvalo aquí.
 - finish_terms: las expresiones de color/material/textura que mencione el usuario, corregidas, en singular y minúsculas ("negros" -> "negro"); si color y textura van juntos, júntalos en una ("negro mate"). Si no menciona: [].
 - attr_terms: características técnicas o funcionales pedidas que NO son color/acabado ni el tipo de producto: "antideslizante", "extraplano", "rimless", "termostática", "empotrable"... corregidas, en singular y minúsculas. DÉJALAS también en keywords y search_text. Si no pide ninguna: [].
@@ -127,7 +128,9 @@ Responde SOLO con un JSON válido, sin markdown ni explicaciones, con EXACTAMENT
 - category: las CATEGORÍAS de la lista que correspondan al tipo de producto buscado (varias si más de una encaja, p. ej. "muebles" -> "Muebles" y "Muebles de baño"); si no es evidente: [].
 - collection: colecciones de la lista SOLO si el usuario las nombra explícitamente ("T-500", "Ona"...); si no: [].
 - min_price / max_price: números solo si menciona precio en euros ("por menos de 200" -> max_price 200; "entre 100 y 300" -> ambos); si no: null.
-- sort: SOLO si pide un orden: "price_desc" ("descendente por precio", "de mayor a menor precio", "los más caros primero"), "price_asc" ("de menor a mayor", "los más baratos primero"), "alpha_asc" (alfabético), "alpha_desc" (alfabético inverso). Las palabras de orden NO van en keywords ni en search_text. Si no lo pide: null.
+- price_band: precio CUALITATIVO sin número: "barato/económico/asequible/básico" -> "cheap"; "caro/premium/lujo/gama alta/exclusivo" -> "expensive"; "gama media" -> "mid". Con número explícito usa min/max y deja null. Esas palabras NO van en search_text. Si no lo menciona: null.
+- size: tamaño RELATIVO sin medidas: "pequeño/compacto/mini" -> "small"; "mediano" -> "medium"; "grande/amplio/XL" -> "large". NO va en search_text. Con medidas explícitas ("de 80 cm") déjalo null y conserva la medida en search_text. Si no lo menciona: null.
+- sort: SOLO si pide un orden explícito: "price_desc" ("descendente por precio", "de mayor a menor precio", "los más caros primero"), "price_asc" ("de menor a mayor", "ordenado por precio ascendente"), "alpha_asc" (alfabético), "alpha_desc" (alfabético inverso). Un adjetivo suelto como "barato" o "caro" es price_band, NO sort. Las palabras de orden NO van en keywords ni en search_text. Si no lo pide: null.
 - Copia los valores EXACTOS de las listas (mayúsculas, acentos y espacios incluidos)."""
 
 
@@ -157,9 +160,10 @@ _VALID_SORTS = {"price_asc", "price_desc", "alpha_asc", "alpha_desc"}
 
 
 def _empty_analysis(q: str) -> dict:
-    return {"keywords": q, "search_text": q, "finish_terms": [], "attr_terms": [],
-            "finish": [], "category": [], "collection": [], "min_price": None,
-            "max_price": None, "sort": None}
+    return {"keywords": q, "corrected_query": q, "search_text": q, "finish_terms": [],
+            "attr_terms": [], "finish": [], "category": [], "collection": [],
+            "min_price": None, "max_price": None, "price_band": None, "size": None,
+            "sort": None}
 
 
 def _local_analysis(q: str) -> dict:
@@ -311,6 +315,7 @@ def analyze_query(q: str) -> dict:
             finish.append(extra)
     a = {
         "keywords": (str(d.get("keywords") or "").strip() or q),
+        "corrected_query": (str(d.get("corrected_query") or "").strip() or q),
         "search_text": (str(d.get("search_text") or "").strip() or q),
         "finish_terms": finish_terms,
         "attr_terms": attr_terms,
@@ -319,12 +324,14 @@ def analyze_query(q: str) -> dict:
         "collection": _valid_values("collections", d.get("collection")),
         "min_price": _to_num(d.get("min_price")),
         "max_price": _to_num(d.get("max_price")),
+        "price_band": d.get("price_band") if d.get("price_band") in ("cheap", "mid", "expensive") else None,
+        "size": d.get("size") if d.get("size") in ("small", "medium", "large") else None,
         "sort": d.get("sort") if d.get("sort") in _VALID_SORTS else None,
     }
     print(f"[analyze] {q!r} -> texto={a['search_text']!r} terms={finish_terms} "
           f"attrs={attr_terms} finish={a['finish']} cat={a['category']} col={a['collection']} "
-          f"precio=({a['min_price']},{a['max_price']}) sort={a['sort']} "
-          f"({CHAT_DEPLOYMENT}, {dt:.0f}ms)", flush=True)
+          f"precio=({a['min_price']},{a['max_price']}) banda={a['price_band']} "
+          f"tam={a['size']} sort={a['sort']} ({CHAT_DEPLOYMENT}, {dt:.0f}ms)", flush=True)
     _ANALYZE_CACHE[q] = a
     if len(_ANALYZE_CACHE) > _ANALYZE_CACHE_MAX:
         _ANALYZE_CACHE.popitem(last=False)
