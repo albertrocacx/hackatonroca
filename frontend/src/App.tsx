@@ -775,12 +775,9 @@ export default function App() {
             </p>
           )}
 
-          {!loading && total !== null && (
-            <h1 className="rs-count">{submitted} <span>({total})</span></h1>
-          )}
-
           {!loading && total !== null && total > 0 && (
             <div className="rs-toolbar">
+              <h1 className="rs-count"><span>{total} resultado{total === 1 ? "" : "s"}</span></h1>
               <label className="rs-sort">
                 Ordenar por
                 <select
