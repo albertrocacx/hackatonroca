@@ -278,13 +278,20 @@ def analyze_query(q: str) -> dict:
         return _copy_analysis(_ANALYZE_CACHE[q])
     try:
         t0 = time.perf_counter()
-        r = _llm_client().responses.create(
-            model=CHAT_DEPLOYMENT, max_output_tokens=8000,
-            input=[{"role": "system", "content": _analyze_sys()},
-                   {"role": "user", "content": q}],
-        )
+        # El content filter de Azure corta a veces la respuesta a mitad de JSON
+        # (status=incomplete, reason=content_filter) de forma NO determinista: la misma
+        # query suele salir limpia al reintentar. Un segundo intento antes del fallback.
+        d = None
+        for _ in range(2):
+            r = _llm_client().responses.create(
+                model=CHAT_DEPLOYMENT, max_output_tokens=8000,
+                input=[{"role": "system", "content": _analyze_sys()},
+                       {"role": "user", "content": q}],
+            )
+            d = _parse_llm_json(r.output_text or "")
+            if d is not None:
+                break
         dt = (time.perf_counter() - t0) * 1000
-        d = _parse_llm_json(r.output_text or "")
     except Exception as e:  # noqa: BLE001 — LLM caído/filtrado/timeout: análisis local
         print(f"[analyze] LLM FALLO ({e!r}) -> fallback local {q!r}", flush=True)
         return _local_analysis(q)
