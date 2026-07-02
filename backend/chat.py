@@ -61,7 +61,7 @@ _search_fn = None
 _TOOLS = None                     # definiciones anthropic (search_catalog + search_manual)
 SEARCH_PARAMS: set[str] = set()   # todos los params de search()
 LIST_PARAMS: set[str] = set()     # los que son listas (deben enviarse como lista)
-INTERNAL_PARAMS = {"q", "limit", "include_spare"}  # no son filtros de usuario
+INTERNAL_PARAMS = {"q", "limit", "include_spare", "auto"}  # no son filtros de usuario
 
 _SESSIONS: dict[str, list] = {}   # session_id -> messages (historial API)
 
@@ -97,6 +97,9 @@ def _describe(name: str) -> str:
         return f"Filtra por {name} exacta (opcional)."
     if name == "finish":
         return "Acabados/colores exactos a filtrar (opcional)."
+    if name == "sort":
+        return ("Orden de resultados si el usuario lo pide: 'price_asc', 'price_desc', "
+                "'alpha_asc' o 'alpha_desc'. Omítelo para orden por relevancia.")
     bound = "mínimo" if name.startswith("min") else "máximo" if name.startswith("max") else ""
     if "price" in name:
         return f"Precio {bound} en EUR (opcional).".replace("  ", " ")
@@ -151,16 +154,42 @@ _MANUAL_TOOL = {
 }
 
 
+def _strip_leading_char(sku: str) -> str:
+    """Quita el primer elemento (letra o dígito) empezando por la izquierda.
+    '18S6090000' -> '8S6090000' -> 'S6090000' -> ... Si está vacío, lo devuelve intacto."""
+    return sku[1:] if sku else sku
+
+
 def search_manual_impl(sku: str, doctype: str, question: str, top: int = MANUAL_TOP) -> dict:
     """Búsqueda en el índice de manuales por sku+doctype. Devuelve un payload citable
-    (con pdf_url firmada). Aislada para poder testearla sin el LLM."""
+    (con pdf_url firmada). Aislada para poder testearla sin el LLM.
+
+    Reintento por SKU (una sola vez): se busca con el SKU introducido; si no devuelve nada,
+    se quita el primer elemento (letra o dígito) empezando por la izquierda y se vuelve a
+    buscar. Si tampoco aparece, se termina. Cubre SKUs con un prefijo/variante que no casa
+    con la carpeta del manual (p.ej. '18S6090000' -> '8S6090000')."""
     import search_ocr  # búsqueda vectorial con filtros de metadatos (índice de manuales)
     dt = DOCTYPE_MAP.get((doctype or "").strip().lower().replace(" ", "_"), (doctype or "").strip())
-    hits = search_ocr.search_ocr((question or "").strip(), sku=(sku or "").strip(),
-                                 doctype=dt or None, top=top)
+    q = (question or "").strip()
+    sku0 = (sku or "").strip()
+
+    sku_used = sku0
+    hits = search_ocr.search_ocr(q, sku=sku0 or None, doctype=dt or None, top=top)
+    retried = False
+    if not hits and sku0:
+        sku1 = _strip_leading_char(sku0)
+        if sku1 and sku1 != sku0:   # solo reintentamos si el recorte deja un SKU no vacío
+            retried = True
+            print(f"[manual] sku={sku0!r} sin resultados -> reintento con {sku1!r}", flush=True)
+            hits = search_ocr.search_ocr(q, sku=sku1, doctype=dt or None, top=top)
+            sku_used = sku1
+
     results = [{"sku": h.get("sku"), "doctype": h.get("doctype"), "pdf_url": h.get("pdf_url"),
                 "text": (h.get("text") or "")[:1200]} for h in hits]
-    return {"sku": (sku or "").strip(), "doctype": dt, "count": len(results), "results": results}
+    payload = {"sku": sku_used, "doctype": dt, "count": len(results), "results": results}
+    if retried:   # informa a Claude de que el SKU fue recortado para citar bien
+        payload["sku_requested"] = sku0
+    return payload
 
 
 def configure(search_fn):
@@ -299,6 +328,10 @@ def _search_label(inp: dict) -> str:
     fin = inp.get("finish")
     if fin:
         extras.append(f"acabado {', '.join(fin) if isinstance(fin, list) else fin}")
+    sort_labels = {"price_asc": "por precio ascendente", "price_desc": "por precio descendente",
+                   "alpha_asc": "por orden alfabético", "alpha_desc": "por orden alfabético inverso"}
+    if inp.get("sort") in sort_labels:
+        extras.append(sort_labels[inp["sort"]])
     label = " ".join(parts)
     return f"{label} · {' · '.join(extras)}" if extras else label
 

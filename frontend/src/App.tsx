@@ -11,12 +11,21 @@ import Design from "./Design";
 import Compare from "./Compare";
 import {
   search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED, searchByImage,
-  type ProductSummary, type ProductDetail, type Suggestion, type Filter,
+  type ProductSummary, type ProductDetail, type Suggestion, type Filter, type AppliedTag,
   type Selected, type Facets as FacetsData, type ModelCard, type ShopItem,
   type ImageSearchGroup,
+  type SortKey,
 } from "./api";
 import { ImageDropPanel, CameraIcon, type Photo } from "./ImageSearch";
 import { downscalePhoto } from "./imageUtils";
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: "relevance", label: "Relevancia semántica" },
+  { value: "price_asc", label: "Precio: de menor a mayor" },
+  { value: "price_desc", label: "Precio: de mayor a menor" },
+  { value: "alpha_asc", label: "Alfabético (A–Z)" },
+  { value: "alpha_desc", label: "Alfabético (Z–A)" },
+];
 
 const CHAT_INTRO =
   "Hola. Dime qué buscas —un lavabo, un plato de ducha, una grifería— y te muestro opciones en la parrilla. Puedo filtrar por precio o acabado y afinar la búsqueda.";
@@ -161,7 +170,16 @@ export default function App() {
   const [baseText, setBaseText] = useState("");
   const [subcat, setSubcat] = useState<string | null>(null);
   const [sel, setSel] = useState<Selected>(EMPTY_SELECTED);
+  const [sort, setSort] = useState<SortKey>("relevance");
   const debounce = useRef<number | undefined>(undefined);
+
+  // --- filtros en móvil (el sidebar se pliega bajo un botón "Filtros") ---
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // --- interpretacion NL -> filtros aplicados (tags + sidebar) ---
+  const [appliedTags, setAppliedTags] = useState<AppliedTag[]>([]);
+  const [tagsHidden, setTagsHidden] = useState(false);
+  const [correction, setCorrection] = useState<{ from: string; to: string } | null>(null);
 
   // --- autocompletado ---
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -211,13 +229,48 @@ export default function App() {
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  // Única función que llama al backend. No toca la selección de facetas (sólo la usa).
-  async function runSearch(text: string, sc: string | null, s: Selected) {
+  // Única función que llama al backend. Con auto=true (búsqueda nueva de texto), el LLM
+  // del backend puede convertir atributos ("rojos") en filtros reales del catálogo y
+  // detectar el orden pedido ("descendente por precio"): se reflejan en sidebar/selector
+  // y el texto base queda limpio (solo el producto) para las re-consultas de facetas.
+  async function runSearch(text: string, sc: string | null, s: Selected,
+                           auto = false, sortKey: SortKey = sort) {
     setLoading(true); setError(null); setDetail(null); setOpen(false);
     setImageGroups(null);                    // una búsqueda de texto sale del modo imagen
     try {
-      const r = await search(text, s, sc);
+      const r = await search(text, s, sc, auto, sortKey);
       setResults(r.results); setTotal(r.total); setFacets(r.facets);
+      if (auto && r.auto) {
+        const a = r.auto.applied;
+        if (Object.keys(a).length > 0) {
+          const dims = a.size?.dims ?? {};
+          const rangeOf = (d?: { min: number | null; max: number | null }, prev?: { min: number | null; max: number | null }) =>
+            d ? { min: d.min ?? null, max: d.max ?? null } : prev!;
+          setSel({
+            ...s,
+            categories: a.category ?? s.categories,
+            collections: a.collection ?? s.collections,
+            finishes: a.finish ?? s.finishes,
+            price: { min: a.min_price ?? s.price.min, max: a.max_price ?? s.price.max },
+            length: rangeOf(dims.length, s.length),
+            width: rangeOf(dims.width, s.width),
+            height: rangeOf(dims.height, s.height),
+          });
+        }
+        if (a.sort) setSort(a.sort);
+        if (r.auto.search_text) setBaseText(r.auto.search_text);
+        setAppliedTags(r.auto.tags ?? []); setTagsHidden(false);
+        const corrected = r.auto.corrected && r.auto.corrected_query;
+        setCorrection(corrected ? { from: text, to: r.auto.corrected_query! } : null);
+        if (corrected) setSubmitted(r.auto.corrected_query!);
+        // traza reducida para la demo: qué entendió el intérprete de la frase
+        console.groupCollapsed(`%c[interpret] "${text}"`, "color:#1c5c6e;font-weight:bold");
+        console.log("texto de búsqueda:", r.auto.search_text);
+        console.log("filtros aplicados:", a);
+        console.log("tags:", r.auto.tags ?? []);
+        if (corrected) console.log("corrección:", text, "->", r.auto.corrected_query);
+        console.groupEnd();
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -278,26 +331,35 @@ export default function App() {
     }
   }
 
-  // Nueva búsqueda desde el buscador: fija SCOPE y resetea facetas (semilla = filtros auto)
+  // Nueva búsqueda desde el buscador: con fotos manda la imagen; si no, /search?auto=1
+  // interpreta la frase en el backend (erratas, filtros, tamaño, orden) en UNA llamada
+  // y la respuesta fija sidebar, tags y banner de corrección (en runSearch).
   function doSearch(e: FormEvent) {
     e.preventDefault();
-    if (photos.length > 0) { runImageSearch(q); return; }
+    if (photos.length > 0) {
+      setAppliedTags([]); setCorrection(null);   // en modo imagen no hay tags NL
+      runImageSearch(q);
+      return;
+    }
     if (!q.trim()) return;
     const s = withAutoFilters(EMPTY_SELECTED, autoFilters);
-    setBaseText(q); setSubcat(null); setSel(s); setSubmitted(q);
+    setBaseText(q); setSubcat(null); setSel(s); setSubmitted(q); setSort("relevance");
+    setAppliedTags([]); setCorrection(null); setTagsHidden(false);
     clearTimeout(debounce.current);
-    runSearch(q, null, s);
+    runSearch(q, null, s, true, "relevance");
   }
 
-  // Búsqueda de texto directa desde el panel al enfocar (sugerencias más buscadas y
-  // categorías populares). Robusta: usa el motor de /search (Azure/substring).
-  function launchSearch(term: string) {
+  // Búsqueda de texto desde el panel al enfocar (interpretada) o desde el enlace
+  // "buscar en su lugar por…" del banner (literal=true: sin reinterpretar, para que
+  // el LLM no vuelva a "corregir" lo que el usuario pidió literalmente).
+  function launchSearch(term: string, literal = false) {
     skipSuggest.current = true;
     setQ(term);
     setBaseText(term); setSubcat(null); setSel(EMPTY_SELECTED); setSubmitted(term);
-    setOpen(false);
+    setSort("relevance");
+    setAppliedTags([]); setCorrection(null); setTagsHidden(false); setOpen(false);
     clearTimeout(debounce.current);
-    runSearch(term, null, EMPTY_SELECTED);
+    runSearch(term, null, EMPTY_SELECTED, !literal, "relevance");
   }
 
   function pickSuggestion(sug: Suggestion) {
@@ -310,16 +372,64 @@ export default function App() {
     else if (sug.type === "subcategory") sc = sug.term;
     const s = withAutoFilters(base, autoFilters);
     const label = [sug.term, ...autoFilters.map((f) => f.label)].filter(Boolean).join(" · ");
-    setBaseText(""); setSubcat(sc); setSel(s); setSubmitted(label);
+    setBaseText(""); setSubcat(sc); setSel(s); setSubmitted(label); setSort("relevance");
+    setAppliedTags([]); setCorrection(null);
     clearTimeout(debounce.current);
-    runSearch("", sc, s);
+    runSearch("", sc, s, false, "relevance");
   }
 
-  // Cambio en el sidebar: actualiza selección, mantiene SCOPE, re-busca con debounce
+  // ¿Sigue activo en la selección el filtro que representa este tag?
+  function tagActive(tag: AppliedTag, s: Selected): boolean {
+    switch (tag.id) {
+      case "category": return s.categories.length > 0;
+      case "collection": return s.collections.length > 0;
+      case "finish": return s.finishes.length > 0;
+      case "price": return s.price.min != null || s.price.max != null;
+      case "size":
+        return (tag.dimensions ?? []).some((d) => s[d].min != null || s[d].max != null);
+      default: return true;
+    }
+  }
+
+  // Quita un tag concreto: limpia esa parte de la selección y re-busca.
+  function removeTag(tag: AppliedTag) {
+    const next: Selected = {
+      ...sel,
+      categories: [...sel.categories], collections: [...sel.collections], finishes: [...sel.finishes],
+      price: { ...sel.price }, length: { ...sel.length }, width: { ...sel.width }, height: { ...sel.height },
+    };
+    if (tag.id === "category") next.categories = [];
+    else if (tag.id === "collection") next.collections = [];
+    else if (tag.id === "finish") next.finishes = [];
+    else if (tag.id === "price") next.price = { min: null, max: null };
+    else if (tag.id === "size") for (const d of tag.dimensions ?? []) next[d] = { min: null, max: null };
+    setSel(next);
+    setAppliedTags((t) => t.filter((x) => x.id !== tag.id));
+    clearTimeout(debounce.current);
+    runSearch(baseText, subcat, next);
+  }
+
+  // Limpia todos los filtros aplicados (mantiene el texto/SCOPE de la búsqueda).
+  function clearAllFilters() {
+    setSel(EMPTY_SELECTED);
+    setAppliedTags([]);
+    clearTimeout(debounce.current);
+    runSearch(baseText, subcat, EMPTY_SELECTED);
+  }
+
+  // Cambio en el sidebar: actualiza selección, reconcilia tags, mantiene SCOPE y re-busca
   function onFacetsChange(next: Selected) {
     setSel(next);
+    setAppliedTags((tags) => tags.filter((t) => tagActive(t, next)));
     clearTimeout(debounce.current);
     debounce.current = window.setTimeout(() => runSearch(baseText, subcat, next), 220);
+  }
+
+  // Cambio manual del orden: re-busca la misma consulta con el nuevo criterio
+  function onSortChange(v: SortKey) {
+    setSort(v);
+    clearTimeout(debounce.current);
+    runSearch(baseText, subcat, sel, false, v);
   }
 
   async function openProduct(sku: string) {
@@ -382,6 +492,7 @@ export default function App() {
           const f = ev.filters ?? {};
           setBaseText(q2);
           setSubcat(f.subcategory ?? null);
+          setSort(f.sort ?? "relevance");
           setSel({
             ...EMPTY_SELECTED,
             categories: f.category ? [f.category] : [],
@@ -414,7 +525,7 @@ export default function App() {
     if (!chatReady) {
       if (messages.length === 0) {
         setMessages([{ role: "error",
-          text: "Chat en modo demo. Para activarlo: ejecuta `claude setup-token`, añade CLAUDE_CODE_OAUTH_TOKEN a backend/.env y reinicia el servidor. La búsqueda ya funciona." }]);
+          text: "Chat en modo demo. Para activarlo, añade CLAUDE_API_KEY a backend/.env (o defínela como variable de entorno) y reinicia el servidor. La búsqueda ya funciona." }]);
       }
       return;
     }
@@ -427,6 +538,13 @@ export default function App() {
     setMessages(chatReady ? [{ role: "assistant", text: CHAT_INTRO }] : []);
     setChatStatus(null);
   }
+
+  // nº de filtros activos, para el badge del botón "Filtros" en móvil
+  const rangeOn = (r: { min: number | null; max: number | null }) =>
+    r.min != null || r.max != null ? 1 : 0;
+  const activeFilters =
+    sel.categories.length + sel.collections.length + sel.finishes.length +
+    rangeOn(sel.price) + rangeOn(sel.length) + rangeOn(sel.width) + rangeOn(sel.height);
 
   return (
     <>
@@ -447,7 +565,9 @@ export default function App() {
               if (e.dataTransfer.files.length) addPhotos(e.dataTransfer.files);
             }}
           >
-            <SearchIcon />
+            <button type="submit" className="rs-search-ico" aria-label="Buscar">
+              <SearchIcon />
+            </button>
             {photos.map((p) => (
               <span key={p.id} className="rs-photo-chip">
                 <img src={p.url} alt="" />
@@ -558,9 +678,9 @@ export default function App() {
             )}
           </div>
           <button type="submit" className="rs-search-btn">Buscar</button>
-          <button type="button" className="rs-ai-btn" onClick={openAI} title="Buscar y conversar con IA">
+          <button type="button" className="rs-ai-btn" onClick={openAI} title="Buscar y conversar con IA" aria-label="Búsqueda IA">
             <SparkIcon />
-            <span>Búsqueda IA</span>
+            <span className="rs-ai-label">Búsqueda IA</span>
           </button>
         </form>
         <button
@@ -591,7 +711,18 @@ export default function App() {
       <div className="rs-layout">
         {facets && total !== null && total > 0 && (
           <aside className="rs-sidebar">
-            <Facets facets={facets} selected={sel} onChange={onFacetsChange} />
+            <button
+              type="button"
+              className="rs-filters-toggle"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+            >
+              <span>Filtros{activeFilters > 0 ? ` (${activeFilters})` : ""}</span>
+              <span className="fac-chev">{filtersOpen ? "⌃" : "⌄"}</span>
+            </button>
+            <div className={`rs-sidebar-body${filtersOpen ? " is-open" : ""}`}>
+              <Facets facets={facets} selected={sel} onChange={onFacetsChange} />
+            </div>
           </aside>
         )}
 
@@ -599,8 +730,69 @@ export default function App() {
           {loading && <p className="rs-state">Buscando…</p>}
           {error && <p className="rs-state rs-error">{error}</p>}
 
+          {!loading && appliedTags.length > 0 && (
+            <div className="rs-filters-bar">
+              <button
+                type="button"
+                className="rs-tagsbar-toggle"
+                onClick={() => setTagsHidden((h) => !h)}
+              >
+                {tagsHidden ? "Mostrar filtros →" : "Ocultar filtros ←"}
+              </button>
+              {!tagsHidden && (
+                <>
+                  {appliedTags.map((t) => (
+                    <span key={t.id} className={`rs-filter-tag rs-filter-tag--${t.type}`}>
+                      {t.label}
+                      <button
+                        type="button"
+                        className="rs-filter-tag-x"
+                        aria-label={`Quitar ${t.label}`}
+                        onClick={() => removeTag(t)}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <button type="button" className="rs-filters-clear" onClick={clearAllFilters}>
+                    Limpiar todos los filtros
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {!loading && correction && (
+            <p className="rs-correction">
+              Mostrando resultados para <b>{correction.to}</b>. Buscar en su lugar por{" "}
+              <button
+                type="button"
+                className="rs-correction-link"
+                onClick={() => launchSearch(correction.from, true)}
+              >
+                {correction.from}
+              </button>
+            </p>
+          )}
+
           {!loading && total !== null && (
             <h1 className="rs-count">{submitted} <span>({total})</span></h1>
+          )}
+
+          {!loading && total !== null && total > 0 && (
+            <div className="rs-toolbar">
+              <label className="rs-sort">
+                Ordenar por
+                <select
+                  value={sort}
+                  onChange={(e) => onSortChange(e.target.value as SortKey)}
+                >
+                  {SORT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
           )}
 
           {!loading && total === 0 && (

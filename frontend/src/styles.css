@@ -93,6 +93,8 @@ button { font-family: inherit; }
   border-radius: 6px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
   overflow: hidden;
+  overflow-y: auto;
+  max-height: min(480px, 65vh);
   z-index: 20;
 }
 .rs-suggest-filters {
@@ -175,6 +177,11 @@ button { font-family: inherit; }
   padding: 1px 7px;
 }
 .rs-searchbox svg { flex: 0 0 auto; }
+/* la lupa es un botón de submit: imprescindible en móvil, donde se oculta "Buscar" */
+.rs-search-ico {
+  border: none; background: none; padding: 0; margin: 0;
+  line-height: 0; cursor: pointer; flex: 0 0 auto;
+}
 .rs-searchbox input {
   flex: 1;
   border: none;
@@ -206,6 +213,31 @@ button { font-family: inherit; }
 }
 .rs-count span { color: var(--muted); }
 
+/* barra de herramientas de resultados: selector de orden a la derecha */
+.rs-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin: -28px 0 20px;
+}
+.rs-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.rs-sort select {
+  border: 1px solid #d9d9d9;
+  background: #fff;
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
 .rs-state {
   text-align: center;
   color: var(--muted);
@@ -220,7 +252,7 @@ button { font-family: inherit; }
   gap: 48px 40px;
 }
 @media (max-width: 900px)  { .rs-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 600px)  { .rs-grid { grid-template-columns: 1fr; } .rs-main { padding: 0 20px 60px; } .rs-header { padding: 14px 20px; gap: 14px; } }
+@media (max-width: 600px)  { .rs-grid { grid-template-columns: 1fr; } .rs-main { padding: 0 20px 60px; } }
 
 .rs-card { }
 .rs-tile {
@@ -341,9 +373,29 @@ button { font-family: inherit; }
   max-height: calc(100vh - 96px);
   overflow-y: auto;
 }
+/* Botón "Filtros" (solo móvil): pliega/despliega las facetas sobre la parrilla */
+.rs-filters-toggle { display: none; }
+
 @media (max-width: 900px) {
-  .rs-layout { flex-direction: column; padding: 0 20px; }
-  .rs-sidebar { position: static; flex-basis: auto; width: 100%; padding-top: 24px; max-height: none; }
+  .rs-layout { flex-direction: column; padding: 0 20px; gap: 0; }
+  .rs-sidebar {
+    position: static; flex-basis: auto; width: 100%;
+    padding-top: 16px; max-height: none; overflow: visible;
+  }
+  .rs-filters-toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%; padding: 12px 16px;
+    border: 1px solid var(--ink); border-radius: 6px;
+    background: #fff; color: var(--ink);
+    font-family: inherit; font-size: 15px; cursor: pointer;
+  }
+  .rs-sidebar-body { display: none; }
+  .rs-sidebar-body.is-open {
+    display: block;
+    border: 1px solid var(--line); border-top: none;
+    border-radius: 0 0 6px 6px;
+    padding: 0 16px 14px; margin-top: -4px;
+  }
 }
 
 /* ---------- facetas ---------- */
@@ -683,6 +735,125 @@ button { font-family: inherit; }
   display: flex; gap: 12px; justify-content: center; align-items: center; margin-top: 18px;
 }
 .rs-sup-error-actions .rs-cart-clear { width: auto; padding: 0; }
+
+/* ---------- barra de filtros aplicados (tags) + banner de corrección ---------- */
+.rs-filters-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  margin: 24px 0 4px;
+}
+
+/* ojo: no reutilizar .rs-filters-toggle aquí — esa clase es el botón del sidebar
+   plegable en móvil (display:none en escritorio) */
+.rs-tagsbar-toggle {
+  border: none;
+  background: none;
+  padding: 4px 0;
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.rs-tagsbar-toggle:hover { text-decoration: underline; }
+
+.rs-filter-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--taupe) 26%, #fff);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.rs-filter-tag-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.rs-filter-tag-x:hover { opacity: 1; }
+
+.rs-filters-clear {
+  border: none;
+  background: none;
+  padding: 4px 0;
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.rs-filters-clear:hover { text-decoration: underline; }
+
+.rs-correction {
+  margin: 12px 0 0;
+  font-size: 15px;
+  color: var(--muted);
+}
+.rs-correction b { color: var(--ink); font-weight: 600; }
+.rs-correction-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 15px;
+  font-style: italic;
+  color: var(--teal);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* =====================================================================
+   RESPONSIVE
+   - ≤820px: cabecera en dos filas (logo + cesta arriba, buscador debajo);
+     se oculta el botón "Buscar" (la lupa hace submit) y el botón IA queda
+     solo con el icono.
+   - ≤600px: tipografías y paddings compactos, overlays a pantalla casi
+     completa, mapa de distribuidores más bajo.
+   ===================================================================== */
+@media (max-width: 820px) {
+  .rs-header { flex-wrap: wrap; gap: 10px 12px; padding: 12px 16px; }
+  .rs-logo { order: 1; }
+  .rs-logo img { height: 26px; }
+  .rs-cart-btn { order: 2; margin-left: auto; width: 40px; height: 40px; }
+  .rs-searchform { order: 3; flex: 1 1 100%; max-width: none; gap: 8px; flex-wrap: nowrap; }
+  .rs-searchbox { padding: 10px 12px; }
+  .rs-search-btn { display: none; }            /* la lupa del buscador hace submit */
+  .rs-ai-btn { padding: 10px 12px; }
+  .rs-ai-btn .rs-ai-label { display: none; }   /* botón IA solo icono */
+}
+
+@media (max-width: 600px) {
+  /* resultados */
+  .rs-count { font-size: 26px; margin: 32px 0 24px; }
+  .rs-grid { gap: 32px 20px; }
+  .rs-state { padding: 48px 0; }
+
+  /* overlay de detalle / distribuidores */
+  .rs-overlay { padding: 14px 10px; }
+  .rs-panel { padding: 22px 16px 32px; }
+  .rs-close { top: 12px; right: 14px; }
+  .rs-detail-title { font-size: 22px; }
+  .rs-detail-top { gap: 20px; }
+  .rs-sup-body { min-height: 0; }
+  .rs-sup-list { max-height: 320px; }
+  .rs-sup-map { min-height: 280px; }
+
+  /* 16px evita el zoom automático de iOS al enfocar el textarea del chat */
+  .rs-chat-composer textarea { font-size: 16px; }
+}
 
 /* ---------- Búsqueda por imagen ---------- */
 .rs-searchbox.is-dragover { outline: 2px dashed #c00; outline-offset: -2px; }
