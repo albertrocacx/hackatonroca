@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useSpeech, MicIcon } from "./speech";
 
 export type ChatRole = "user" | "assistant" | "note" | "error";
 export interface ChatMsg { role: ChatRole; text: string; }
@@ -33,12 +34,30 @@ export default function Chat({ messages, status, busy, onSend, onClose, onNew }:
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, status, busy]);
 
+  // auto-alto del cajetín (también cuando el texto llega por dictado, no solo al teclear)
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = Math.min(ta.scrollHeight, 120) + "px";
+  }, [text]);
+
+  // dictado por voz: transcripción en vivo en el cajetín; al callar se envía solo
+  // (si el asistente aún está respondiendo, el dictado se queda como borrador)
+  const voice = useSpeech({
+    onInterim: setText,
+    onFinal: (t) => {
+      if (busy) { setText(t); return; }
+      onSend(t);
+      setText("");
+    },
+  });
+
   function submit() {
     const t = text.trim();
     if (!t || busy) return;
     onSend(t);
     setText("");
-    if (taRef.current) taRef.current.style.height = "auto";
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -82,14 +101,21 @@ export default function Chat({ messages, status, busy, onSend, onClose, onNew }:
           ref={taRef}
           value={text}
           rows={1}
-          placeholder="Pregunta, pide una comparativa, filtra…"
-          onChange={(e) => {
-            setText(e.target.value);
-            e.target.style.height = "auto";
-            e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
-          }}
+          placeholder={voice.listening ? "Escuchando…" : "Pregunta, pide una comparativa, filtra…"}
+          onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
         />
+        {voice.supported && (
+          <button
+            type="button"
+            className={`rs-chat-mic${voice.listening ? " is-rec" : ""}`}
+            onClick={voice.toggle}
+            aria-label={voice.listening ? "Parar dictado" : "Hablar con el asistente"}
+            title={voice.listening ? "Parar dictado" : "Hablar con el asistente"}
+          >
+            <MicIcon small />
+          </button>
+        )}
         <button type="button" className="rs-chat-send" onClick={submit} disabled={busy} aria-label="Enviar">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
             <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />

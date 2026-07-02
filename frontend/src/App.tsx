@@ -19,6 +19,7 @@ import {
 } from "./api";
 import { ImageDropPanel, CameraIcon, type Photo } from "./ImageSearch";
 import { downscalePhoto } from "./imageUtils";
+import { useSpeech, MicIcon } from "./speech";
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: "websort", label: "Recomendados" },
@@ -198,6 +199,25 @@ export default function App() {
   const [active, setActive] = useState(-1);
   const boxRef = useRef<HTMLDivElement>(null);
   const skipSuggest = useRef(false);
+
+  // --- búsqueda por voz: dicta la frase y, al callar, se lanza interpretada (auto=1) ---
+  const voice = useSpeech({
+    onInterim: (t) => { skipSuggest.current = true; setQ(t); },
+    onFinal: (t) => {
+      if (photos.length > 0) {
+        setAppliedTags([]); setCorrection(null);   // en modo imagen no hay tags NL
+        skipSuggest.current = true; setQ(t);
+        runImageSearch(t);
+      } else {
+        launchSearch(t);
+      }
+    },
+  });
+
+  function toggleVoice() {
+    if (!voice.listening) { setOpen(false); skipSuggest.current = true; setQ(""); }
+    voice.toggle();
+  }
 
   useEffect(() => {
     const term = q.trim();
@@ -612,7 +632,11 @@ export default function App() {
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={onKeyDown}
               onFocus={() => setOpen(true)}
-              placeholder={photos.length ? "Añade texto para refinar (opcional)" : "Introduce tu búsqueda"}
+              placeholder={
+                voice.listening ? "Escuchando…"
+                : photos.length ? "Añade texto para refinar (opcional)"
+                : "Introduce tu búsqueda"
+              }
               aria-label="Buscar"
               autoFocus
             />
@@ -622,6 +646,18 @@ export default function App() {
                   <line x1="5" y1="5" x2="19" y2="19" strokeLinecap="round" />
                   <line x1="19" y1="5" x2="5" y2="19" strokeLinecap="round" />
                 </svg>
+              </button>
+            )}
+
+            {voice.supported && (
+              <button
+                type="button"
+                className={`rs-mic-btn${voice.listening ? " is-rec" : ""}`}
+                aria-label={voice.listening ? "Parar dictado" : "Buscar por voz"}
+                title={voice.listening ? "Parar dictado" : "Buscar por voz"}
+                onClick={toggleVoice}
+              >
+                <MicIcon />
               </button>
             )}
 
