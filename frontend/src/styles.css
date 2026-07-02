@@ -1024,6 +1024,36 @@ button { font-family: inherit; }
 }
 .rs-design-img { width: 100%; display: block; background: var(--tile); }
 
+/* Escaparate de espera del render: rota por los productos que entran en el diseño */
+.rs-design-wait {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 12px; text-align: center; padding: 12px;
+}
+.rs-design-wait-tag {
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+}
+.rs-design-wait-img {
+  width: min(240px, 58%); aspect-ratio: 1; background: var(--tile);
+  display: flex; align-items: center; justify-content: center;
+}
+.rs-design-wait-img img {
+  max-width: 82%; max-height: 82%; object-fit: contain;
+  animation: rs-wait-in .55s ease;
+}
+@keyframes rs-wait-in {
+  from { opacity: 0; transform: scale(.96); }
+  to { opacity: 1; transform: none; }
+}
+.rs-design-wait-name { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink); }
+.rs-design-wait-meta { margin: 3px 0 0; font-size: 12.5px; color: var(--muted); }
+.rs-design-wait-dots { display: flex; gap: 6px; }
+.rs-design-wait-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+.rs-design-wait-dots i.is-on { background: var(--ink); }
+.rs-design-wait-bar { width: min(320px, 78%); height: 3px; background: var(--line); overflow: hidden; }
+.rs-design-wait-bar i { display: block; height: 100%; background: var(--ink); transition: width 1s linear; }
+.rs-design-wait-phase { margin: 0; font-size: 13px; color: var(--ink); }
+.rs-design-wait .rs-design-hint { margin: 0; }
+
 /* Comparador antes/después: el render marca el tamaño; la foto original va encima
    recortada con clip-path hasta donde esté el divisor. */
 .rs-design-compare {

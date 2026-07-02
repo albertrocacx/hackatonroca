@@ -18,6 +18,7 @@ import {
   type DesignResponse, type RenewalItem, type RenewalProduct,
 } from "./api";
 import { PLACEHOLDER_IMG } from "./Tile";
+import { SHOWCASE_PRODUCTS } from "./showcase";
 
 const STYLES = ["Moderno", "Nórdico", "Clásico", "Industrial", "Mediterráneo", "Spa"];
 const MAX_UPLOAD_PX = 1600;   // la foto del espacio se reduce en cliente antes de subirla
@@ -68,6 +69,83 @@ function CartToggle({ inCart, onAdd, onRemove }: {
     >
       {inCart ? (hover ? "Quitar" : "✓ En la cesta") : "Añadir"}
     </button>
+  );
+}
+
+// Mensajes de fase durante el render (30-90 s): cambian según el tiempo transcurrido
+// para transmitir avance real aunque el backend no emita progreso.
+const WAIT_PHASES: [number, string][] = [
+  [0, "Estudiando las fotos reales de tus productos…"],
+  [8, "Componiendo la distribución del espacio…"],
+  [20, "Aplicando materiales, acabados e iluminación…"],
+  [38, "Renderizando texturas y detalles…"],
+  [60, "Últimos retoques, ya casi está…"],
+];
+
+// Producto mínimo que sabe pintar el escaparate de espera.
+type ShowItem = {
+  sku: string; title: string | null; image: string | null;
+  price_rrp: number | null; finish?: string | null;
+  collection?: string | null; category?: string | null;
+};
+
+// Escaparate de espera: primero desfilan los productos que están entrando en el
+// diseño (los de la cesta) y después la selección fija de catálogo (showcase.ts),
+// 5 s cada uno, con fase y barra de progreso asintótica. Convierte los 30-90 s
+// del render en anticipación. Sin la selección fija, con 1-2 productos en la
+// cesta el carrusel se repetiría sin parar.
+function DesignShowcase({ items, secs }: { items: ShowItem[]; secs: number }) {
+  const [idx, setIdx] = useState(0);
+  // Barajado una vez por render (el componente se monta al empezar cada espera),
+  // sin lo que ya desfila desde la cesta.
+  const [extras] = useState<ShowItem[]>(() => {
+    const inCart = new Set(items.map((it) => it.sku));
+    return SHOWCASE_PRODUCTS
+      .filter((p) => !inCart.has(p.sku))
+      .sort(() => Math.random() - 0.5);
+  });
+  const seq = [...items, ...extras];
+  useEffect(() => {
+    if (seq.length < 2) return;
+    const t = window.setInterval(() => setIdx((i) => i + 1), 5000);
+    return () => window.clearInterval(t);
+  }, [seq.length]);
+
+  const pos = idx % seq.length;
+  const inCartPhase = pos < items.length;
+  const p = seq[pos];
+  const phase = WAIT_PHASES.reduce((msg, [t, s]) => (secs >= t ? s : msg), WAIT_PHASES[0][1]);
+  // Se acerca a 96% sin llegar nunca: no miente si el render tarda más de lo típico.
+  const pct = Math.min(96, Math.round(100 * (1 - Math.exp(-secs / 30))));
+  // Los de catálogo van con su área delante ("Espejos e iluminación · Luna · 302 €")
+  const meta = [!inCartPhase ? p.category : null, p.collection, p.finish].filter(Boolean);
+  if (p.price_rrp != null) meta.push(eur(p.price_rrp));
+
+  return (
+    <div className="rs-design-wait">
+      <span className="rs-design-wait-tag">
+        {inCartPhase
+          ? `Colocando en tu baño${items.length > 1 ? ` · ${pos + 1} de ${items.length}` : ""}`
+          : "Mientras tanto, del catálogo Roca"}
+      </span>
+      <div className="rs-design-wait-img">
+        <img key={`${p.sku}-${idx}`} src={p.image ?? PLACEHOLDER_IMG} alt="" />
+      </div>
+      <div>
+        <p className="rs-design-wait-name">{p.title ?? p.sku}</p>
+        <p className="rs-design-wait-meta">{meta.join(" · ")}</p>
+      </div>
+      {inCartPhase && items.length > 1 && items.length <= 10 && (
+        <div className="rs-design-wait-dots">
+          {items.map((it, i) => (
+            <i key={it.sku} className={i === pos ? "is-on" : ""} />
+          ))}
+        </div>
+      )}
+      <div className="rs-design-wait-bar"><i style={{ width: `${pct}%` }} /></div>
+      <p className="rs-design-wait-phase">{phase}</p>
+      <p className="rs-design-hint">Suele tardar entre 30 y 90 segundos · {secs}s</p>
+    </div>
   );
 }
 
@@ -264,6 +342,10 @@ export default function Design({ ready, onClose }: Props) {
   }
 
   const working = busy || analyzing;
+  // Productos que enseña el escaparate de espera: los marcados de la cesta;
+  // en una iteración sin skus (refine), los del render anterior.
+  const selectedItems = usable.filter((l) => sel.has(l.item.sku)).map((l) => l.item);
+  const waitItems = selectedItems.length > 0 ? selectedItems : (result?.products ?? []);
   const total = result?.products.reduce((s, p) => s + (p.price_rrp ?? 0), 0) ?? 0;
   const showAnalysis = view === "analysis" && analysis !== null;
 
@@ -411,11 +493,15 @@ export default function Design({ ready, onClose }: Props) {
             )}
 
             {busy ? (
-              <div className="rs-design-progress">
-                <i className="rs-chat-pulse" />
-                <p>Diseñando tu baño… {secs}s</p>
-                <p className="rs-design-hint">Suele tardar entre 30 y 90 segundos.</p>
-              </div>
+              waitItems.length > 0 ? (
+                <DesignShowcase items={waitItems} secs={secs} />
+              ) : (
+                <div className="rs-design-progress">
+                  <i className="rs-chat-pulse" />
+                  <p>Diseñando tu baño… {secs}s</p>
+                  <p className="rs-design-hint">Suele tardar entre 30 y 90 segundos.</p>
+                </div>
+              )
             ) : analyzing ? (
               <div className="rs-design-progress">
                 <i className="rs-chat-pulse" />
