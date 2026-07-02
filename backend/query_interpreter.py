@@ -77,7 +77,8 @@ SYSTEM = (
     '  "corrected_query": string,        // frase corregida (o igual si no hay erratas)\n'
     '  "corrected": boolean,             // true solo si has cambiado algo\n'
     '  "category": string|null,          // EXACTAMENTE una de las categorias dadas, o null\n'
-    '  "color": string|null,             // EXACTAMENTE una palabra de la lista de colores, o null\n'
+    '  "color": string|null,             // la palabra de color/acabado que uso el usuario (p.ej. "rojo"), para la etiqueta; o null\n'
+    '  "finishes": string[],             // valores EXACTOS de la lista de acabados que correspondan a ese color; [] si ninguno\n'
     '  "collection": string|null,        // nombre de coleccion/linea de diseno si se menciona, o null\n'
     '  "price": { "min": number|null, "max": number|null },  // en euros\n'
     '  "size": { "band": "small"|"medium"|"large"|null, "dimension": "length"|"width"|"height"|null },\n'
@@ -89,7 +90,11 @@ SYSTEM = (
     "- Tamanos relativos: 'pequena/mini/compacta'=>small, 'mediana'=>medium, 'grande/xl/amplia'=>large. "
     "Elige la dimension mas relevante para esa categoria (length=largo, width=ancho, height=alto). "
     "Si no hay mencion de tamano, band=null y dimension=null.\n"
-    "- category y color DEBEN salir de las listas dadas (elige el valor mas parecido) o null si no aplica.\n"
+    "- category DEBE salir de la lista de categorias dada (elige el valor mas parecido) o null.\n"
+    "- Para el color/acabado: rellena 'finishes' con los valores EXACTOS de la lista de acabados dada "
+    "que correspondan al color pedido (p.ej. 'rojo' -> ['Passion Red']; 'verde' -> todos los verdes de la lista; "
+    "'negro' -> todos los negros). Si el color no tiene acabados en la lista, finishes=[]. "
+    "'color' es solo la palabra que uso el usuario (para la etiqueta).\n"
     "- search_text NO debe incluir el color, el precio ni el tamano; solo el producto."
 )
 
@@ -113,13 +118,14 @@ def _extract_json(text: str):
     return None
 
 
-def interpret(q: str, categories: tuple, colors: tuple):
+def interpret(q: str, categories: tuple, colors: tuple, finishes: tuple = ()):
     """Llama al LLM. Devuelve (parsed|None, debug), donde `debug` incluye los textos
     EXACTOS enviados a la LLM (system/user), la respuesta cruda y metadatos del modelo.
-    `categories` y `colors` acotan los valores validos."""
+    `categories`, `colors` y `finishes` acotan los valores validos."""
     user = (
         f"Categorias disponibles: {', '.join(categories)}\n"
-        f"Colores disponibles: {', '.join(colors)}\n\n"
+        f"Colores frecuentes: {', '.join(colors)}\n"
+        f"Acabados disponibles (usa estos valores EXACTOS en 'finishes'): {', '.join(finishes)}\n\n"
         f"Frase del usuario: {q}"
     )
     debug = {"engine": "llm", "model": DEPLOYMENT, "endpoint": FOUNDRY_ENDPOINT,

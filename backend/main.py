@@ -487,6 +487,42 @@ for _p in PRODUCTS:
         if _seg:
             _COLLECTION_BY_NORM.setdefault(_norm(_seg), _seg)
 COLOR_WORDS = tuple(COLOR_LEXICON.keys())
+FINISHES = tuple(CONCEPTS.get("finishes") or [])
+_FINISH_BY_NORM = {_norm(f): f for f in FINISHES}
+
+# Fallback color -> tokens (es/en) para casos que el lexico o el LLM no cubren
+# (p.ej. rojo -> "Passion Red", cuyo nombre esta en ingles). Se buscan los tokens
+# dentro de los nombres reales de acabado del catalogo.
+COLOR_SYNONYMS = {
+    "rojo": ("rojo", "red"), "roja": ("rojo", "red"),
+    "verde": ("verde", "green"),
+    "azul": ("azul", "blue"),
+    "gris": ("gris", "grey", "gray"),
+    "negro": ("negro", "black"), "negra": ("negro", "black"),
+    "blanco": ("blanco", "white"), "blanca": ("blanco", "white"),
+    "amarillo": ("amarillo", "yellow"),
+    "naranja": ("naranja", "orange"),
+    "rosa": ("rosa", "pink", "rose"),
+    "morado": ("morado", "purpura", "purple", "violeta"),
+    "violeta": ("violeta", "purple", "morado"),
+    "marron": ("marron", "brown"),
+    "dorado": ("oro", "dorado", "gold"), "dorada": ("oro", "dorado", "gold"),
+    "plata": ("plata", "silver"), "plateado": ("plata", "silver"),
+    "cobre": ("cobre", "copper"),
+    "beige": ("beige",),
+}
+
+
+def _finishes_for_color(color):
+    """Acabados del catalogo que casan con una palabra de color, por lexico o por tokens es/en."""
+    if not color:
+        return []
+    n = _norm(color)
+    vals = COLOR_LEXICON.get(n)
+    if vals:
+        return list(vals)
+    tokens = COLOR_SYNONYMS.get(n, (n,))
+    return [f for f in FINISHES if any(t in _norm(f) for t in tokens)]
 
 SIZE_LABEL = {"small": "pequeño", "medium": "mediano", "large": "grande"}
 _DIM_GETTER = {"length": _len_mm, "width": _wid_mm, "height": _hei_mm}
@@ -556,10 +592,18 @@ def _build_interpretation(raw, data):
         tags.append({"id": "collection", "type": "collection", "label": coll})
 
     color = data.get("color")
-    finishes = COLOR_LEXICON.get(_norm(color)) if color else None
+    # 1) valores de acabado que el LLM eligio de la lista real (validados contra el catalogo)
+    llm_finishes = data.get("finishes") if isinstance(data.get("finishes"), list) else []
+    finishes = list(dict.fromkeys(
+        _FINISH_BY_NORM[_norm(f)] for f in llm_finishes if _norm(f) in _FINISH_BY_NORM))
+    # 2) fallback: si el LLM no dio acabados validos, mapea la palabra de color
+    #    (lexico o tokens es/en contra los nombres reales de acabado)
+    if not finishes and color:
+        finishes = _finishes_for_color(color)
     if finishes:
         filters["finishes"] = finishes
-        tags.append({"id": "finish", "type": "finish", "label": str(color).capitalize()})
+        tags.append({"id": "finish", "type": "finish",
+                     "label": str(color).capitalize() if color else "Color"})
 
     price = data.get("price") if isinstance(data.get("price"), dict) else {}
     mn, mx = price.get("min"), price.get("max")
@@ -628,7 +672,7 @@ def interpret_endpoint(q: str = ""):
     llm_debug = None
     if query_interpreter is not None and query_interpreter.available():
         try:
-            parsed, llm_debug = query_interpreter.interpret(raw, tuple(CATEGORIES), COLOR_WORDS)
+            parsed, llm_debug = query_interpreter.interpret(raw, tuple(CATEGORIES), COLOR_WORDS, FINISHES)
             if parsed:
                 result = _build_interpretation(raw, parsed)
         except Exception as e:  # noqa: BLE001 — LLM caido/timeout: no romper la busqueda
