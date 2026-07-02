@@ -15,6 +15,7 @@ import {
   type Selected, type Facets as FacetsData, type ModelCard, type ShopItem,
   type ImageSearchGroup,
   type SortKey,
+  type SelectedProduct,
 } from "./api";
 import { ImageDropPanel, CameraIcon, type Photo } from "./ImageSearch";
 import { downscalePhoto } from "./imageUtils";
@@ -121,6 +122,9 @@ export default function App() {
   const [total, setTotal] = useState<number | null>(null);
   const [facets, setFacets] = useState<FacetsData | null>(null);
   const [detail, setDetail] = useState<ProductDetail | null>(null);
+  // último producto abierto: NO se borra al cerrar la ficha; es el "producto seleccionado"
+  // que el chat usa para resolver "el manual de este producto" sin pedir el SKU.
+  const [lastProduct, setLastProduct] = useState<SelectedProduct | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -435,7 +439,9 @@ export default function App() {
   async function openProduct(sku: string) {
     setError(null);
     try {
-      setDetail(await getProduct(sku));
+      const d = await getProduct(sku);
+      setDetail(d);
+      setLastProduct({ sku: d.sku, model: d.model, title: d.title });
       window.scrollTo({ top: 0 });
     } catch (err) {
       setError(String(err));
@@ -463,6 +469,7 @@ export default function App() {
         visible: results.slice(0, 12)
           .map((r) => r.variants[r.default]?.sku ?? r.variants[0]?.sku)
           .filter(Boolean),
+        selected: lastProduct ?? undefined,
       };
       for await (const ev of streamChat({ text, session_id: sessionId.current, view })) {
         if (ev.type === "text") {

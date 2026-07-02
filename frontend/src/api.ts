@@ -34,6 +34,7 @@ export interface ModelCard {
 }
 
 export interface ProductDetail extends ProductSummary {
+  model: string | null;
   subcategory: string | null;
   desc: { marketing: string | null; extended: string | null };
   variants: Variant[];
@@ -299,7 +300,9 @@ export async function designBathroom(req: DesignRequest): Promise<DesignResponse
   return r.json();
 }
 
-export interface ChatView { query?: string; visible?: string[]; }
+// Producto seleccionado (último abierto): el agente lo usa para "el manual de este producto"
+export interface SelectedProduct { sku: string; model?: string | null; title?: string | null; }
+export interface ChatView { query?: string; visible?: string[]; selected?: SelectedProduct; }
 export interface ChatRequest { text: string; session_id?: string | null; view?: ChatView; }
 
 export interface ChatFilters {
