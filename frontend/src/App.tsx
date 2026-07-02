@@ -14,6 +14,7 @@ import {
   type ProductSummary, type ProductDetail, type Suggestion, type Filter, type AppliedTag,
   type Selected, type Facets as FacetsData, type ModelCard, type ShopItem,
   type ImageSearchGroup,
+  type ImageSearchContext,
   type SortKey,
   type SelectedProduct,
 } from "./api";
@@ -139,6 +140,8 @@ export default function App() {
   const [imgPanelOpen, setImgPanelOpen] = useState(false);
   const [sameProduct, setSameProduct] = useState(true);
   const [imageGroups, setImageGroups] = useState<ImageSearchGroup[] | null>(null);
+  // contexto de la última búsqueda por imagen: la Búsqueda IA parte de estas coincidencias
+  const [imageContext, setImageContext] = useState<ImageSearchContext | null>(null);
   const [imageReady, setImageReady] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
@@ -267,6 +270,7 @@ export default function App() {
                            auto = false, sortKey: SortKey = sort) {
     setLoading(true); setError(null); setDetail(null); setOpen(false);
     setImageGroups(null);                    // una búsqueda de texto sale del modo imagen
+    setImageContext(null);
     try {
       const r = await search(text, s, sc, auto, sortKey);
       setResults(r.results); setTotal(r.total); setFacets(r.facets);
@@ -331,12 +335,19 @@ export default function App() {
     });
     // las secciones por foto dejan de corresponder a las fotos actuales -> salir del modo distinct
     if (imageGroups) {
-      setImageGroups(null);
+      setImageGroups(null); setImageContext(null);
       setResults([]); setTotal(null); setSubmitted("");
     }
   }
 
   // Búsqueda por imagen: las fotos mandan; el texto (si hay) filtra los matches visuales.
+  // Los mejores matches (SKU + título) se guardan en imageContext para que la Búsqueda IA
+  // parta de ellos ("esto que sale en mi foto").
+  const topMatches = (cards: ModelCard[], n = 6) =>
+    cards.slice(0, n)
+      .map((c) => ({ sku: c.variants[c.default]?.sku ?? c.variants[0]?.sku, title: c.title }))
+      .filter((m): m is { sku: string; title: string | null } => !!m.sku);
+
   async function runImageSearch(text: string) {
     setLoading(true); setError(null); setDetail(null); setOpen(false); setImgPanelOpen(false);
     try {
@@ -345,15 +356,21 @@ export default function App() {
       const nf = `${photos.length} foto${photos.length > 1 ? "s" : ""}`;
       setSubmitted(text.trim() ? `${text.trim()} · ${nf}` : `Búsqueda por imagen (${nf})`);
       setFacets(null);                       // sin sidebar en modo imagen
+      const ctx: ImageSearchContext = {
+        photos: photos.length, mode, refine: text.trim() || undefined, groups: [],
+      };
       if ("groups" in r) {
         setImageGroups(r.groups);
         setResults([]);
         setTotal(r.groups.reduce((n, g) => n + g.total, 0));
+        ctx.groups = r.groups.map((g) => ({ photo: g.photo, matches: topMatches(g.results) }));
       } else {
         setImageGroups(null);
         setResults(r.results);
         setTotal(r.total);
+        ctx.groups = [{ photo: 0, matches: topMatches(r.results) }];
       }
+      setImageContext(ctx.groups.some((g) => g.matches.length) ? ctx : null);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -504,6 +521,7 @@ export default function App() {
           .map((r) => r.variants[r.default]?.sku ?? r.variants[0]?.sku)
           .filter(Boolean),
         selected: lastProduct ?? undefined,
+        image_search: imageContext ?? undefined,
       };
       for await (const ev of streamChat({ text, session_id: sessionId.current, view })) {
         if (ev.type === "text") {
@@ -523,6 +541,7 @@ export default function App() {
         } else if (ev.type === "grid") {
           asstOpen = false;                       // tras la parrilla, el próximo texto abre burbuja nueva
           setImageGroups(null);   // el chat pinta la parrilla normal: salir del modo por-foto
+          setImageContext(null);  // ya inyectado en la sesión; la parrilla nueva manda
           const q2 = ev.query ?? submitted;
           setResults(ev.data.results);
           setTotal(ev.data.total);
@@ -569,15 +588,19 @@ export default function App() {
   }
 
   // Botón "Búsqueda IA": abre el panel y siembra la conversación con la consulta actual.
+  // Tras una búsqueda por imagen, la semilla parte de sus coincidencias (viajan en view.image_search).
   function openAI() {
     setAiOpen(true);
-    const seed = q.trim();
+    let seed = q.trim();
     if (!chatReady) {
       if (messages.length === 0) {
         setMessages([{ role: "error",
           text: "Chat en modo demo. Para activarlo, añade CLAUDE_API_KEY a backend/.env (o defínela como variable de entorno) y reinicia el servidor. La búsqueda ya funciona." }]);
       }
       return;
+    }
+    if (!seed && imageContext) {
+      seed = "He buscado por foto. Preséntame brevemente lo que has identificado y ayúdame a elegir o afinar.";
     }
     if (seed) sendChat(seed);
     else if (messages.length === 0) setMessages([{ role: "assistant", text: CHAT_INTRO }]);
