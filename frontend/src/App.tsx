@@ -21,6 +21,7 @@ import { ImageDropPanel, CameraIcon, type Photo } from "./ImageSearch";
 import { downscalePhoto } from "./imageUtils";
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: "websort", label: "Recomendados" },
   { value: "relevance", label: "Relevancia semántica" },
   { value: "price_asc", label: "Precio: de menor a mayor" },
   { value: "price_desc", label: "Precio: de mayor a menor" },
@@ -174,7 +175,8 @@ export default function App() {
   const [baseText, setBaseText] = useState("");
   const [subcat, setSubcat] = useState<string | null>(null);
   const [sel, setSel] = useState<Selected>(EMPTY_SELECTED);
-  const [sort, setSort] = useState<SortKey>("relevance");
+  // websort: la carga inicial es el escaparate; cada búsqueda nueva vuelve a "relevance"
+  const [sort, setSort] = useState<SortKey>("websort");
   const debounce = useRef<number | undefined>(undefined);
 
   // --- filtros en móvil (el sidebar se pliega bajo un botón "Filtros") ---
@@ -454,6 +456,14 @@ export default function App() {
       setImageReady(!!h.image_ready);
       setDesignReady(!!h.design_ready);
     }).catch(() => {});
+  }, []);
+
+  // Carga inicial (escaparate): al abrir la app, todo el catálogo ordenado por
+  // websort (el orden de escaparate de roca.es); el backend devuelve los primeros 30.
+  useEffect(() => {
+    setSubmitted("Catálogo");
+    runSearch("", null, EMPTY_SELECTED, false, "websort");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Envía un turno al agente y consume el stream NDJSON, actualizando chat + parrilla.

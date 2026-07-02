@@ -66,6 +66,15 @@ try:
 except FileNotFoundError:
     IMAGES = {}
 
+# orden de escaparate de roca.es por modelo (menor = antes), extraído del índice
+# semántico donde viaja dentro del texto de cada chunk (ver build_websort.py).
+# Sin el fichero, sort=websort degrada al orden del catálogo (no rompe nada).
+try:
+    with open(os.path.join(DATA, "websort.json"), encoding="utf-8") as f:
+        WEBSORT = json.load(f)   # { model -> posición (int) }
+except FileNotFoundError:
+    WEBSORT = {}
+
 # red de distribuidores/puntos de venta para la compra OFFLINE (ver build_suppliers.py).
 # datos reales del export oficial de POS Roca en España (861 puntos geolocalizados).
 try:
@@ -277,7 +286,7 @@ app.add_middleware(
 
 # resumen de arranque: qué datos y qué motores quedaron disponibles (visible en logs de Railway)
 print(f"[startup] productos={len(PRODUCTS)} modelos={len(BY_MODEL)} relaciones={len(RELATIONS)} "
-      f"imagenes={len(IMAGES)} suppliers={len(SUPPLIERS)}", flush=True)
+      f"imagenes={len(IMAGES)} suppliers={len(SUPPLIERS)} websort={len(WEBSORT)}", flush=True)
 print(f"[startup] azure_search={'ok' if azure_search else 'NO'} "
       f"chat={'ok' if chat else 'NO'} chat_key={'si' if (chat and chat.API_KEY) else 'no'} "
       f"design={'ok' if (design and design.READY) else 'NO'} "
@@ -512,8 +521,9 @@ def _agg_colors(products):
                    for c, ms in models.items()), key=lambda x: -x["count"])
 
 
-# órdenes de la parrilla que acepta /search (por defecto, relevancia del motor)
-SORT_KEYS = {"relevance", "price_asc", "price_desc", "alpha_asc", "alpha_desc"}
+# órdenes de la parrilla que acepta /search (por defecto, relevancia del motor).
+# websort = orden de escaparate de roca.es; es el que pide el frontend al abrir la app.
+SORT_KEYS = {"relevance", "websort", "price_asc", "price_desc", "alpha_asc", "alpha_desc"}
 
 
 @app.get("/search")
@@ -757,7 +767,11 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
     # reordena la parrilla COMPLETA si se pide (el limit trocea después): precio del
     # modelo = min/max entre sus variantes que cumplen los filtros; sin precio, al final.
     if sort_key != "relevance" and order:
-        if sort_key in ("price_asc", "price_desc"):
+        if sort_key == "websort":
+            # ascendente (menor = antes en el escaparate); los modelos sin posición
+            # van al final conservando entre sí el orden previo (sort estable)
+            order.sort(key=lambda m: WEBSORT.get(m, float("inf")))
+        elif sort_key in ("price_asc", "price_desc"):
             asc = sort_key == "price_asc"
             best = {}
             for _, p in matched:

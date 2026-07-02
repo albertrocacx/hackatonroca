@@ -48,6 +48,7 @@ backend/data/*
 !backend/data/concepts.json
 !backend/data/images.json
 !backend/data/suppliers.json
+!backend/data/websort.json
 !backend/data/concept_vectors.npy
 
 # Ficheros de prueba locales (no se suben al repo)

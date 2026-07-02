@@ -92,8 +92,9 @@ export interface Facets {
   price: Range | null;
   dims: { length: Range | null; width: Range | null; height: Range | null };
 }
-// Orden de la parrilla (lo aplica el backend sobre el total, antes del limit)
-export type SortKey = "relevance" | "price_asc" | "price_desc" | "alpha_asc" | "alpha_desc";
+// Orden de la parrilla (lo aplica el backend sobre el total, antes del limit).
+// "websort" = orden de escaparate de roca.es; es el de la carga inicial de la app.
+export type SortKey = "relevance" | "websort" | "price_asc" | "price_desc" | "alpha_asc" | "alpha_desc";
 
 // Tag visual de un filtro aplicado por el intérprete (chips sobre la parrilla).
 export interface AppliedTag {
