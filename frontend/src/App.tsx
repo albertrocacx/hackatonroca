@@ -227,6 +227,11 @@ export default function App() {
       if (ph) URL.revokeObjectURL(ph.url);
       return p.filter((x) => x.id !== id);
     });
+    // las secciones por foto dejan de corresponder a las fotos actuales -> salir del modo distinct
+    if (imageGroups) {
+      setImageGroups(null);
+      setResults([]); setTotal(null); setSubmitted("");
+    }
   }
 
   // Búsqueda por imagen: las fotos mandan; el texto (si hay) filtra los matches visuales.
@@ -346,6 +351,7 @@ export default function App() {
           setChatStatus(ev.label ?? TOOL_LABEL[ev.name] ?? "");
         } else if (ev.type === "grid") {
           asstOpen = false;                       // tras la parrilla, el próximo texto abre burbuja nueva
+          setImageGroups(null);   // el chat pinta la parrilla normal: salir del modo por-foto
           const q2 = ev.query ?? submitted;
           setResults(ev.data.results);
           setTotal(ev.data.total);
