@@ -7,7 +7,7 @@ UNIK = "851545..."   # modelo con varias variantes de acabado
 
 def test_response_incluye_facets_y_cards():
     r = main.search(q=Q)
-    assert set(r["facets"]) == {"category", "collection", "finish", "price", "dims"}
+    assert set(r["facets"]) == {"category", "collection", "finish", "color", "price", "dims"}
     assert r["total"] > 0
     c = r["results"][0]
     assert "model" in c and isinstance(c["variants"], list) and c["variants"]

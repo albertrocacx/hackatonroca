@@ -492,21 +492,23 @@ def compare_products(codes: list[str]) -> dict:
 
 
 @mcp.tool()
-def search_manual(sku: str, doctype: str, question: str) -> dict:
-    """Responde preguntas sobre la documentación de UN producto concreto (por SKU):
-    manual de usuario, guía de instalación o ficha técnica. Devuelve fragmentos
-    relevantes y la URL del PDF para citarla como enlace.
+def search_manual(sku: str, doctype: str, question: str = "", model: str = "") -> dict:
+    """Consulta la documentación de UN producto concreto: manual de usuario, guía de
+    instalación o ficha técnica. Con `question` devuelve los fragmentos relevantes;
+    sin ella devuelve el documento COMPLETO (todas sus páginas). Ambos incluyen la
+    URL del PDF para citarla como enlace.
 
     Args:
-        sku: SKU del producto, p. ej. "8S6090000".
+        sku: SKU del producto, p. ej. "A812429000" o "8S6090000".
         doctype: "UserManual" (uso/limpieza/mantenimiento), "InstallationManual"
             (instalación/montaje/fijación) o "TechnicalFactSheet" (ficha técnica).
-        question: La pregunta del usuario en lenguaje natural.
+        question: Pregunta concreta en lenguaje natural; vacía = documento completo.
+        model: Modelo del catálogo tal cual (puede llevar puntos, p. ej. "212106..1").
     """
     if chat is None:
         return {"error": "Módulo de manuales no disponible en este entorno."}
     try:
-        return chat.search_manual_impl(sku, doctype, question)
+        return chat.search_manual_impl(sku, doctype, question or None, model or None)
     except Exception as e:  # noqa: BLE001 — índice de manuales caído: error legible
         return {"error": f"No se pudo consultar la documentación: {e}"}
 

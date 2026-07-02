@@ -135,21 +135,29 @@ DOCTYPE_MAP = {
 
 _MANUAL_TOOL = {
     "name": "search_manual",
-    "description": ("Responde preguntas sobre la documentación de UN producto concreto (por SKU): "
-                    "manual de usuario, guía de instalación o ficha técnica. Devuelve fragmentos y "
-                    "la URL del PDF para citarla. Requiere sku + doctype + question."),
+    "description": ("Consulta la documentación de UN producto concreto: manual de usuario, guía "
+                    "de instalación o ficha técnica. Dos modos: CON `question` devuelve los "
+                    "fragmentos relevantes para responderla; SIN `question` devuelve el documento "
+                    "COMPLETO (todas sus páginas) para entregarlo entero. Ambos incluyen la URL "
+                    "del PDF para citarla como enlace."),
     "input_schema": {
         "type": "object",
         "properties": {
             "sku": {"type": "string",
                     "description": "SKU/código del producto (carpeta del manual), p.ej. '8S6090000'."},
+            "model": {"type": "string",
+                      "description": "Modelo del catálogo TAL CUAL, conservando sus puntos comodín "
+                                     "si los tiene (p.ej. '212106..1'). Pásalo siempre que lo "
+                                     "conozcas (p.ej. del producto seleccionado en [contexto])."},
             "doctype": {"type": "string",
                         "enum": ["UserManual", "InstallationManual", "TechnicalFactSheet"],
                         "description": "Documento a consultar: UserManual (uso/mantenimiento), "
                                        "InstallationManual (instalación/montaje) o TechnicalFactSheet (ficha técnica)."},
-            "question": {"type": "string", "description": "La pregunta del usuario en lenguaje natural."},
+            "question": {"type": "string",
+                         "description": "Pregunta concreta del usuario. OMÍTELA si pide el "
+                                        "documento entero (p.ej. 'dame el manual')."},
         },
-        "required": ["sku", "doctype", "question"],
+        "required": ["sku", "doctype"],
     },
 }
 
@@ -160,35 +168,72 @@ def _strip_leading_char(sku: str) -> str:
     return sku[1:] if sku else sku
 
 
-def search_manual_impl(sku: str, doctype: str, question: str, top: int = MANUAL_TOP) -> dict:
-    """Búsqueda en el índice de manuales por sku+doctype. Devuelve un payload citable
+def _sku_candidates(sku: str, model: str | None) -> list[str]:
+    """Identificadores a probar contra la carpeta del manual, en orden y sin duplicados:
+    el SKU tal cual, sin su primer elemento (prefijo de mercado: 'A812429000' ->
+    '812429000'), el modelo del catálogo tal cual (conserva los '..' comodín interiores,
+    p.ej. '212106..1') y el modelo sin puntos finales ('851986...' -> '851986')."""
+    sku = (sku or "").strip()
+    model = (model or "").strip()
+    out: list[str] = []
+    for cand in (sku, _strip_leading_char(sku), model, model.rstrip(".")):
+        if cand and cand not in out:
+            out.append(cand)
+    return out
+
+
+MAX_PAGE_CHARS = 4000   # texto por página en modo documento completo
+
+
+def search_manual_impl(sku: str, doctype: str, question: str | None = None,
+                       model: str | None = None, top: int = MANUAL_TOP) -> dict:
+    """Consulta del índice de manuales por sku+doctype. Devuelve un payload citable
     (con pdf_url firmada). Aislada para poder testearla sin el LLM.
 
-    Reintento por SKU (una sola vez): se busca con el SKU introducido; si no devuelve nada,
-    se quita el primer elemento (letra o dígito) empezando por la izquierda y se vuelve a
-    buscar. Si tampoco aparece, se termina. Cubre SKUs con un prefijo/variante que no casa
-    con la carpeta del manual (p.ej. '18S6090000' -> '8S6090000')."""
-    import search_ocr  # búsqueda vectorial con filtros de metadatos (índice de manuales)
+    Dos modos: con `question` recupera los fragmentos más relevantes (RAG); sin ella
+    recupera el documento COMPLETO (todas sus páginas en orden, agrupadas por PDF).
+
+    Resolución del identificador: se prueban en orden los candidatos de
+    `_sku_candidates` (SKU tal cual, sin el primer elemento, modelo, modelo sin puntos
+    finales) hasta que uno devuelva resultados. Cubre el prefijo de mercado
+    ('A812429000' -> '812429000') y las carpetas nombradas por modelo ('212106..1')."""
+    import search_ocr  # búsqueda con filtros de metadatos (índice de manuales)
     dt = DOCTYPE_MAP.get((doctype or "").strip().lower().replace(" ", "_"), (doctype or "").strip())
     q = (question or "").strip()
-    sku0 = (sku or "").strip()
+    cands = _sku_candidates(sku, model)
+    if not cands:
+        return {"error": "Falta el sku (o el model) del producto."}
 
-    sku_used = sku0
-    hits = search_ocr.search_ocr(q, sku=sku0 or None, doctype=dt or None, top=top)
-    retried = False
-    if not hits and sku0:
-        sku1 = _strip_leading_char(sku0)
-        if sku1 and sku1 != sku0:   # solo reintentamos si el recorte deja un SKU no vacío
-            retried = True
-            print(f"[manual] sku={sku0!r} sin resultados -> reintento con {sku1!r}", flush=True)
-            hits = search_ocr.search_ocr(q, sku=sku1, doctype=dt or None, top=top)
-            sku_used = sku1
+    sku_used, hits, full = cands[0], [], {"documents": [], "truncated": False}
+    for cand in cands:
+        if q:
+            hits = search_ocr.search_ocr(q, sku=cand, doctype=dt or None, top=top)
+            found = bool(hits)
+        else:
+            full = search_ocr.fetch_manual(cand, doctype=dt or None)
+            found = bool(full["documents"])
+        if found:
+            if cand != cands[0]:
+                print(f"[manual] sku={cands[0]!r} sin resultados -> encontrado como {cand!r}", flush=True)
+            sku_used = cand
+            break
 
-    results = [{"sku": h.get("sku"), "doctype": h.get("doctype"), "pdf_url": h.get("pdf_url"),
-                "text": (h.get("text") or "")[:1200]} for h in hits]
-    payload = {"sku": sku_used, "doctype": dt, "count": len(results), "results": results}
-    if retried:   # informa a Claude de que el SKU fue recortado para citar bien
-        payload["sku_requested"] = sku0
+    if q:
+        results = [{"sku": h.get("sku"), "doctype": h.get("doctype"), "pdf_url": h.get("pdf_url"),
+                    "text": (h.get("text") or "")[:1200]} for h in hits]
+        payload = {"mode": "qa", "sku": sku_used, "doctype": dt,
+                   "count": len(results), "results": results}
+    else:
+        docs = full["documents"]
+        for d in docs:
+            d["pages"] = [{**p, "text": (p.get("text") or "")[:MAX_PAGE_CHARS]}
+                          for p in d["pages"]]
+        payload = {"mode": "full_document", "sku": sku_used, "doctype": dt,
+                   "count": len(docs), "documents": docs}
+        if full.get("truncated"):
+            payload["truncated"] = True
+    if sku_used != cands[0]:   # informa a Claude de con qué identificador se encontró
+        payload["sku_requested"] = cands[0]
     return payload
 
 
@@ -245,8 +290,8 @@ Herramientas (úsalas, nunca inventes productos, precios ni instrucciones):
 - search_catalog: buscar productos. Los resultados se enseñan TAMBIÉN al usuario en una \
 parrilla automáticamente, así que no listes todos: resume y señala la parrilla ("Aquí \
 tienes algunas opciones a la izquierda").
-- search_manual: responder preguntas sobre la documentación de UN producto concreto (por \
-SKU): manual de usuario, guía de instalación o ficha técnica.
+- search_manual: consultar la documentación de UN producto concreto (manual de usuario, \
+guía de instalación o ficha técnica): entrega el documento completo o responde preguntas.
 
 REGLA DE BÚSQUEDA (impórtate mucho):
 - Puedes hacer VARIAS llamadas a search_catalog en el mismo turno para refinar: probar \
@@ -269,17 +314,28 @@ de 200 €" -> `query="lavabos blancos", max_price=200`; "inodoros de alto máx 
 `query="inodoros", max_height=1000`.
 
 DOCUMENTACIÓN DE UN PRODUCTO (search_manual):
-- Úsala cuando el usuario pregunte cómo usar, instalar, montar o mantener un producto \
-identificado por su SKU (o uno visible en [contexto]).
-- Necesitas DOS datos para llamarla: `sku` y `doctype`. `doctype` es UserManual (uso, \
-limpieza, mantenimiento, garantía) o InstallationManual (instalación, montaje, medidas, \
-fijación, conexiones); usa TechnicalFactSheet solo si piden la ficha técnica.
-- Si NO tienes claro si la pregunta es del manual de USUARIO o de la guía de INSTALACIÓN, \
-PREGÚNTASELO al usuario antes de llamar a la tool (no adivines). Si falta el SKU, pídelo \
-(o confírmalo con el de [contexto] si es evidente).
-- Con los fragmentos devueltos: responde SOLO con esa información y CITA la fuente como \
-ENLACE MARKDOWN CLICABLE al `pdf_url`, p. ej. "[Guía de instalación · SKU 8S6090000](https://…)". \
-Si los fragmentos no contienen la respuesta, dilo claramente (no inventes).
+- Úsala cuando el usuario pida el manual/guía/ficha de un producto o pregunte cómo usarlo, \
+instalarlo, montarlo o mantenerlo.
+- Identificar el producto: por SKU explícito, o por el "producto seleccionado" de \
+[contexto] cuando diga "este producto", "el que estoy viendo" o pida el manual sin \
+especificar cuál: en ese caso usa su SKU directamente SIN pedírselo, y pasa también su \
+modelo en `model` (tal cual, con sus puntos si los tiene). Si no hay ni SKU ni producto \
+seleccionado, pídeselo.
+- `doctype`: UserManual (uso, limpieza, mantenimiento, garantía) o InstallationManual \
+(instalación, montaje, medidas, fijación, conexiones); TechnicalFactSheet solo si piden \
+la ficha técnica. Si NO tienes claro cuál de los dos quiere, PREGÚNTASELO antes de \
+llamar a la tool (no adivines).
+- DOS MODOS de uso:
+  · Pide el documento entero ("dame el manual", "enséñame la guía de instalación") -> \
+llama SIN `question`: recibirás el documento completo por páginas. PRESÉNTALO ENTERO y \
+fiel al contenido, estructurado con encabezados y listas (incluye SIEMPRE las advertencias \
+de seguridad). Si hay versiones en varios idiomas, presenta la del idioma del usuario y \
+menciona las demás. No omitas secciones; condensa solo lo repetido.
+  · Pregunta concreta ("¿cómo se limpia?", "¿qué medidas de instalación tiene?") -> llama \
+CON `question`: responde SOLO con la información de los fragmentos devueltos.
+- En AMBOS modos cita SIEMPRE la fuente como ENLACE MARKDOWN CLICABLE al `pdf_url`, \
+p. ej. "[Manual de usuario · SKU 812429000](https://…)" (uno por PDF citado). Si no hay \
+resultados o los fragmentos no contienen la respuesta, dilo claramente (no inventes).
 
 Comportamiento:
 - Responde en el idioma del usuario (español por defecto). Sé concreto y breve.
@@ -339,12 +395,18 @@ def _search_label(inp: dict) -> str:
 _DOCTYPE_LABEL = {"UserManual": "el manual de usuario",
                   "InstallationManual": "la guía de instalación",
                   "TechnicalFactSheet": "la ficha técnica"}
+_DOCTYPE_LABEL_FULL = {"UserManual": "el manual de usuario completo",
+                       "InstallationManual": "la guía de instalación completa",
+                       "TechnicalFactSheet": "la ficha técnica completa"}
 
 
 def _manual_label(inp: dict) -> str:
-    doc = _DOCTYPE_LABEL.get(inp.get("doctype"), "la documentación")
-    sku = inp.get("sku")
-    return f"Consultando {doc} del producto {sku}" if sku else f"Consultando {doc}"
+    whole = not (inp.get("question") or "").strip()
+    labels = _DOCTYPE_LABEL_FULL if whole else _DOCTYPE_LABEL
+    doc = labels.get(inp.get("doctype"), "la documentación")
+    verb = "Recuperando" if whole else "Consultando"
+    sku = inp.get("sku") or inp.get("model")
+    return f"{verb} {doc} del producto {sku}" if sku else f"{verb} {doc}"
 
 
 def _build_prompt(text: str, view: dict | None) -> str:
@@ -355,6 +417,14 @@ def _build_prompt(text: str, view: dict | None) -> str:
         bits.append(f"búsqueda actual: {view['query']!r}")
     if view.get("visible"):
         bits.append(f"SKUs mostrados: {view['visible'][:12]}")
+    sel = view.get("selected") or {}
+    if sel.get("sku"):
+        s = f"producto seleccionado (último abierto): SKU {sel['sku']}"
+        if sel.get("model"):
+            s += f", modelo {sel['model']}"
+        if sel.get("title"):
+            s += f" — «{sel['title']}»"
+        bits.append(s)
     return f"[contexto] {' | '.join(bits)}\n\n{text}" if bits else text
 
 
@@ -418,7 +488,7 @@ async def stream_turn(text: str, session_id: str | None = None, view: dict | Non
                 if block.name == "search_manual":
                     try:
                         payload = search_manual_impl(inp.get("sku", ""), inp.get("doctype", ""),
-                                                     inp.get("question", ""))
+                                                     inp.get("question"), inp.get("model"))
                     except Exception as e:  # noqa: BLE001
                         payload = {"error": str(e)}
                     tool_results.append({"type": "tool_result", "tool_use_id": block.id,

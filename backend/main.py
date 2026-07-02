@@ -4,11 +4,18 @@ Carga products.json + relations.json en memoria y expone la API.
 v1: busqueda por texto simple + relaciones. Pensado para crecer
 (mas adelante: interpretacion con Claude, embeddings, filtros avanzados).
 """
-import json, os, re, unicodedata
+import json, os, re, sys, unicodedata
 from collections import defaultdict, Counter
 from contextlib import asynccontextmanager
 from typing import Optional
 import numpy as np
+
+# En Windows, si stdout es una tubería (servicio, preview, CI) su encoding por defecto es
+# cp1252 y los prints con caracteres fuera de ese mapa (p.ej. '──' en los logs de azure)
+# lanzan UnicodeEncodeError DENTRO de los handlers -> 500. Forzamos UTF-8 tolerante.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -1096,6 +1103,7 @@ def product_detail(sku: str):
         grouped.setdefault(r["type"], []).extend(targets)
     return {
         **summary(p),
+        "model": p.get("model"),   # para el contexto del chat (manuales por modelo)
         "subcategory": p.get("subcategory"),
         "desc": p.get("desc") or {"marketing": None, "extended": None},
         "variants": [variant_summary(v) for v in BY_MODEL.get(p.get("model"), [])],

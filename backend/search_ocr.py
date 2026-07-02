@@ -101,6 +101,12 @@ VECTOR_FIELD  = os.getenv("OCR_VECTOR_FIELD", "text_vector")
 SKU_FIELD     = os.getenv("OCR_SKU_FIELD", "sku")
 DOCTYPE_FIELD = os.getenv("OCR_DOCTYPE_FIELD", "doctype")
 URL_FIELD     = os.getenv("OCR_URL_FIELD", "pdf_url")
+PAGE_FIELD    = os.getenv("OCR_PAGE_FIELD", "page")
+SOURCE_FIELD  = os.getenv("OCR_SOURCE_FIELD", "source")
+TOTAL_FIELD   = os.getenv("OCR_TOTAL_PAGES_FIELD", "total_pages")
+
+# Tope de páginas al recuperar un documento completo (modo "dame el manual").
+FULL_MAX_PAGES = int(os.getenv("OCR_FULL_MAX_PAGES") or "40")
 
 _aoai = _search = _llm = None
 
@@ -173,6 +179,39 @@ def search_ocr(query: str, sku: str | None = None, doctype=None, top: int = 5,
             "text": r.get(CONTENT_FIELD) or "",
         })
     return out
+
+
+def fetch_manual(sku: str, doctype=None, max_pages: int = FULL_MAX_PAGES) -> dict:
+    """Recupera un documento COMPLETO (todas sus páginas, en orden) filtrando por
+    sku+doctype, sin búsqueda vectorial. Una carpeta puede tener varios PDFs del mismo
+    doctype (p. ej. versiones ES/EN): se devuelve una entrada por PDF con sus páginas.
+
+    Devuelve {"documents": [{sku, doctype, source, pdf_url, total_pages, pages: [...]}, ...],
+    "truncated": bool} (truncated=True si se alcanzó el tope global de páginas)."""
+    _, search = _clients()
+    results = search.search(
+        search_text="*",
+        filter=build_filter(sku, doctype),
+        select=[CONTENT_FIELD, SKU_FIELD, DOCTYPE_FIELD, URL_FIELD,
+                PAGE_FIELD, SOURCE_FIELD, TOTAL_FIELD],
+        order_by=[f"{PAGE_FIELD} asc"],
+        top=max_pages,
+    )
+    docs: dict[str, dict] = {}   # pdf_url -> documento agrupado
+    n = 0
+    for r in results:
+        n += 1
+        url = r.get(URL_FIELD) or ""
+        d = docs.setdefault(url, {
+            "sku": r.get(SKU_FIELD), "doctype": r.get(DOCTYPE_FIELD),
+            "source": r.get(SOURCE_FIELD), "pdf_url": "",
+            "total_pages": r.get(TOTAL_FIELD), "pages": [],
+        })
+        d["pages"].append({"page": r.get(PAGE_FIELD), "text": r.get(CONTENT_FIELD) or ""})
+    for url, d in docs.items():
+        d["pages"].sort(key=lambda p: p["page"] or 0)
+        d["pdf_url"] = with_sas(url)   # URL firmada (abre desde el chat)
+    return {"documents": list(docs.values()), "truncated": n >= max_pages}
 
 
 def answer_ocr(query: str, hits: list[dict]) -> str:
