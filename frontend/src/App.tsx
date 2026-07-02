@@ -8,8 +8,8 @@ import { useCart, CartDrawer } from "./cart";
 import LocalSuppliers from "./LocalSuppliers";
 import ProductCta from "./ProductCta";
 import {
-  search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED,
-  type ProductSummary, type ProductDetail, type Suggestion, type Filter,
+  search, suggest, interpret, selectedFromFilters, getProduct, getHealth, streamChat, EMPTY_SELECTED,
+  type ProductSummary, type ProductDetail, type Suggestion, type Filter, type AppliedTag,
   type Selected, type Facets as FacetsData, type ModelCard, type ShopItem,
 } from "./api";
 
@@ -133,6 +133,14 @@ export default function App() {
   const [sel, setSel] = useState<Selected>(EMPTY_SELECTED);
   const debounce = useRef<number | undefined>(undefined);
 
+  // --- filtros en móvil (el sidebar se pliega bajo un botón "Filtros") ---
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // --- interpretacion NL -> filtros aplicados (tags + sidebar) ---
+  const [appliedTags, setAppliedTags] = useState<AppliedTag[]>([]);
+  const [tagsHidden, setTagsHidden] = useState(false);
+  const [correction, setCorrection] = useState<{ from: string; to: string } | null>(null);
+
   // --- autocompletado ---
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [autoFilters, setAutoFilters] = useState<Filter[]>([]);
@@ -194,23 +202,41 @@ export default function App() {
     }
   }
 
-  // Nueva búsqueda desde el buscador: fija SCOPE y resetea facetas (semilla = filtros auto)
-  function doSearch(e: FormEvent) {
+  // Nueva búsqueda desde el buscador: interpreta la frase (LLM) -> corrige erratas y
+  // aplica filtros (categoría, color, precio, tamaño) al sidebar y como tags.
+  async function doSearch(e: FormEvent) {
     e.preventDefault();
-    if (!q.trim()) return;
-    const s = withAutoFilters(EMPTY_SELECTED, autoFilters);
-    setBaseText(q); setSubcat(null); setSel(s); setSubmitted(q);
-    clearTimeout(debounce.current);
-    runSearch(q, null, s);
+    const term = q.trim();
+    if (!term) return;
+    setOpen(false); setLoading(true); setError(null); setDetail(null);
+    try {
+      const r = await interpret(term);
+      const s = selectedFromFilters(r.filters);
+      setBaseText(r.search_text); setSubcat(null); setSel(s);
+      setSubmitted(r.corrected_query || term);
+      setAppliedTags(r.tags); setTagsHidden(false);
+      setCorrection(r.corrected ? { from: r.query, to: r.corrected_query } : null);
+      clearTimeout(debounce.current);
+      await runSearch(r.search_text, null, s);
+    } catch {
+      // interpretación no disponible -> búsqueda directa con los filtros auto del /suggest
+      const s = withAutoFilters(EMPTY_SELECTED, autoFilters);
+      setBaseText(term); setSubcat(null); setSel(s); setSubmitted(term);
+      setAppliedTags([]); setCorrection(null);
+      clearTimeout(debounce.current);
+      await runSearch(term, null, s);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  // Búsqueda de texto directa desde el panel al enfocar (sugerencias más buscadas y
-  // categorías populares). Robusta: usa el motor de /search (Azure/substring).
+  // Búsqueda de texto literal (sin interpretar). La usa el panel al enfocar y el
+  // enlace "buscar en su lugar por…" del banner de corrección.
   function launchSearch(term: string) {
     skipSuggest.current = true;
     setQ(term);
     setBaseText(term); setSubcat(null); setSel(EMPTY_SELECTED); setSubmitted(term);
-    setOpen(false);
+    setAppliedTags([]); setCorrection(null); setOpen(false);
     clearTimeout(debounce.current);
     runSearch(term, null, EMPTY_SELECTED);
   }
@@ -226,13 +252,53 @@ export default function App() {
     const s = withAutoFilters(base, autoFilters);
     const label = [sug.term, ...autoFilters.map((f) => f.label)].filter(Boolean).join(" · ");
     setBaseText(""); setSubcat(sc); setSel(s); setSubmitted(label);
+    setAppliedTags([]); setCorrection(null);
     clearTimeout(debounce.current);
     runSearch("", sc, s);
   }
 
-  // Cambio en el sidebar: actualiza selección, mantiene SCOPE, re-busca con debounce
+  // ¿Sigue activo en la selección el filtro que representa este tag?
+  function tagActive(tag: AppliedTag, s: Selected): boolean {
+    switch (tag.id) {
+      case "category": return s.categories.length > 0;
+      case "collection": return s.collections.length > 0;
+      case "finish": return s.finishes.length > 0;
+      case "price": return s.price.min != null || s.price.max != null;
+      case "size": return tag.dimension ? (s[tag.dimension].min != null || s[tag.dimension].max != null) : false;
+      default: return true;
+    }
+  }
+
+  // Quita un tag concreto: limpia esa parte de la selección y re-busca.
+  function removeTag(tag: AppliedTag) {
+    const next: Selected = {
+      ...sel,
+      categories: [...sel.categories], collections: [...sel.collections], finishes: [...sel.finishes],
+      price: { ...sel.price }, length: { ...sel.length }, width: { ...sel.width }, height: { ...sel.height },
+    };
+    if (tag.id === "category") next.categories = [];
+    else if (tag.id === "collection") next.collections = [];
+    else if (tag.id === "finish") next.finishes = [];
+    else if (tag.id === "price") next.price = { min: null, max: null };
+    else if (tag.id === "size" && tag.dimension) next[tag.dimension] = { min: null, max: null };
+    setSel(next);
+    setAppliedTags((t) => t.filter((x) => x.id !== tag.id));
+    clearTimeout(debounce.current);
+    runSearch(baseText, subcat, next);
+  }
+
+  // Limpia todos los filtros aplicados (mantiene el texto/SCOPE de la búsqueda).
+  function clearAllFilters() {
+    setSel(EMPTY_SELECTED);
+    setAppliedTags([]);
+    clearTimeout(debounce.current);
+    runSearch(baseText, subcat, EMPTY_SELECTED);
+  }
+
+  // Cambio en el sidebar: actualiza selección, reconcilia tags, mantiene SCOPE y re-busca
   function onFacetsChange(next: Selected) {
     setSel(next);
+    setAppliedTags((tags) => tags.filter((t) => tagActive(t, next)));
     clearTimeout(debounce.current);
     debounce.current = window.setTimeout(() => runSearch(baseText, subcat, next), 220);
   }
@@ -338,6 +404,13 @@ export default function App() {
     setChatStatus(null);
   }
 
+  // nº de filtros activos, para el badge del botón "Filtros" en móvil
+  const rangeOn = (r: { min: number | null; max: number | null }) =>
+    r.min != null || r.max != null ? 1 : 0;
+  const activeFilters =
+    sel.categories.length + sel.collections.length + sel.finishes.length +
+    rangeOn(sel.price) + rangeOn(sel.length) + rangeOn(sel.width) + rangeOn(sel.height);
+
   return (
     <>
       <div className={`rs-app${aiOpen ? " rs-app--chat" : ""}`}>
@@ -347,7 +420,9 @@ export default function App() {
         </a>
         <form className="rs-searchform" onSubmit={doSearch}>
           <div className="rs-searchbox" ref={boxRef}>
-            <SearchIcon />
+            <button type="submit" className="rs-search-ico" aria-label="Buscar">
+              <SearchIcon />
+            </button>
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -428,9 +503,9 @@ export default function App() {
             )}
           </div>
           <button type="submit" className="rs-search-btn">Buscar</button>
-          <button type="button" className="rs-ai-btn" onClick={openAI} title="Buscar y conversar con IA">
+          <button type="button" className="rs-ai-btn" onClick={openAI} title="Buscar y conversar con IA" aria-label="Búsqueda IA">
             <SparkIcon />
-            <span>Búsqueda IA</span>
+            <span className="rs-ai-label">Búsqueda IA</span>
           </button>
         </form>
         <button
@@ -448,13 +523,69 @@ export default function App() {
       <div className="rs-layout">
         {facets && total !== null && total > 0 && (
           <aside className="rs-sidebar">
-            <Facets facets={facets} selected={sel} onChange={onFacetsChange} />
+            <button
+              type="button"
+              className="rs-filters-toggle"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+            >
+              <span>Filtros{activeFilters > 0 ? ` (${activeFilters})` : ""}</span>
+              <span className="fac-chev">{filtersOpen ? "⌃" : "⌄"}</span>
+            </button>
+            <div className={`rs-sidebar-body${filtersOpen ? " is-open" : ""}`}>
+              <Facets facets={facets} selected={sel} onChange={onFacetsChange} />
+            </div>
           </aside>
         )}
 
         <main className="rs-main">
           {loading && <p className="rs-state">Buscando…</p>}
           {error && <p className="rs-state rs-error">{error}</p>}
+
+          {!loading && appliedTags.length > 0 && (
+            <div className="rs-filters-bar">
+              <button
+                type="button"
+                className="rs-filters-toggle"
+                onClick={() => setTagsHidden((h) => !h)}
+              >
+                {tagsHidden ? "Mostrar filtros →" : "Ocultar filtros ←"}
+              </button>
+              {!tagsHidden && (
+                <>
+                  {appliedTags.map((t) => (
+                    <span key={t.id} className={`rs-filter-tag rs-filter-tag--${t.type}`}>
+                      {t.label}
+                      <button
+                        type="button"
+                        className="rs-filter-tag-x"
+                        aria-label={`Quitar ${t.label}`}
+                        onClick={() => removeTag(t)}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <button type="button" className="rs-filters-clear" onClick={clearAllFilters}>
+                    Limpiar todos los filtros
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {!loading && correction && (
+            <p className="rs-correction">
+              Mostrando resultados para <b>{correction.to}</b>. Buscar en su lugar por{" "}
+              <button
+                type="button"
+                className="rs-correction-link"
+                onClick={() => launchSearch(correction.from)}
+              >
+                {correction.from}
+              </button>
+            </p>
+          )}
 
           {!loading && total !== null && (
             <h1 className="rs-count">{submitted} <span>({total})</span></h1>

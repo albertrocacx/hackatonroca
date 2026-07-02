@@ -146,6 +146,58 @@ export async function getProduct(sku: string): Promise<ProductDetail> {
   return r.json();
 }
 
+// ---- Interpretacion NL -> filtros (LLM) --------------------------------------
+export interface AppliedTag {
+  id: "category" | "collection" | "finish" | "price" | "size";
+  type: string;
+  label: string;
+  dimension?: "length" | "width" | "height";
+}
+
+// Filtros con la MISMA forma que los params de /search (alineado con ChatFilters).
+export interface InterpretFilters {
+  category?: string;
+  collection?: string;
+  finishes?: string[];
+  min_price?: number;
+  max_price?: number;
+  min_length?: number;
+  max_length?: number;
+  min_width?: number;
+  max_width?: number;
+  min_height?: number;
+  max_height?: number;
+}
+
+export interface InterpretResponse {
+  query: string;
+  corrected_query: string;
+  corrected: boolean;
+  search_text: string;
+  filters: InterpretFilters;
+  tags: AppliedTag[];
+}
+
+export async function interpret(q: string): Promise<InterpretResponse> {
+  const r = await fetch(`${API}/interpret?q=${encodeURIComponent(q)}`);
+  if (!r.ok) throw new Error("Error al interpretar la busqueda");
+  return r.json();
+}
+
+// Construye la seleccion del sidebar a partir de los filtros interpretados.
+export function selectedFromFilters(f: InterpretFilters): Selected {
+  return {
+    ...EMPTY_SELECTED,
+    categories: f.category ? [f.category] : [],
+    collections: f.collection ? [f.collection] : [],
+    finishes: f.finishes ?? [],
+    price: { min: f.min_price ?? null, max: f.max_price ?? null },
+    length: { min: f.min_length ?? null, max: f.max_length ?? null },
+    width: { min: f.min_width ?? null, max: f.max_width ?? null },
+    height: { min: f.min_height ?? null, max: f.max_height ?? null },
+  };
+}
+
 // ---- Compra: online (carrito) y offline (distribuidores) --------------------
 // Forma mínima que necesitan carrito y buscador de tiendas. La produce cualquier
 // resultado del grid (card + variante). `online` = disponible para compra online
