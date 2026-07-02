@@ -192,7 +192,7 @@ export async function nearbySuppliers(
 }
 
 // ---- Chat IA (opcional) ----
-export async function getHealth(): Promise<{ chat_ready: boolean }> {
+export async function getHealth(): Promise<{ chat_ready: boolean; image_ready?: boolean }> {
   const r = await fetch(`${API}/health`);
   if (!r.ok) throw new Error("health");
   return r.json();
@@ -248,4 +248,30 @@ export async function* streamChat(req: ChatRequest): AsyncGenerator<ChatEvent> {
   }
   const tail = buf.trim();
   if (tail) yield JSON.parse(tail) as ChatEvent;
+}
+
+// ---- Búsqueda por imagen (endpoint DINOv2 vía backend) ----
+export type ImageMode = "same" | "distinct";
+
+export interface ImageSearchGroup { photo: number; total: number; results: ModelCard[]; }
+export interface ImageSearchSameResponse {
+  query: string; total: number; results: ModelCard[]; facets: null;
+}
+export interface ImageSearchDistinctResponse {
+  query: string; mode: "distinct"; groups: ImageSearchGroup[];
+}
+
+export async function searchByImage(
+  photos: Blob[], q: string, mode: ImageMode
+): Promise<ImageSearchSameResponse | ImageSearchDistinctResponse> {
+  const fd = new FormData();
+  photos.forEach((b, i) => fd.append("images", b, `foto-${i + 1}.jpg`));
+  if (q) fd.set("q", q);
+  fd.set("mode", mode);
+  const r = await fetch(`${API}/search/image`, { method: "POST", body: fd });
+  if (!r.ok) {
+    const detail = await r.json().then((j) => j.detail).catch(() => null);
+    throw new Error(detail || "Error en la búsqueda por imagen");
+  }
+  return r.json();
 }
