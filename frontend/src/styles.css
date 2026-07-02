@@ -697,6 +697,14 @@ button { font-family: inherit; }
   font-family: inherit; font-size: 13px; padding: 10px 0 0; cursor: pointer; text-decoration: underline;
 }
 .rs-cart-clear:hover { color: var(--ink); }
+.rs-cart-design {
+  width: 100%; margin-top: 10px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border: 1px solid var(--ink); background: #fff; color: var(--ink);
+  font-family: inherit; font-size: 14px; padding: 12px; border-radius: 6px; cursor: pointer;
+}
+.rs-cart-design:hover { background: var(--tile); }
+.rs-cart-empty .rs-cart-design { margin-top: 18px; width: auto; }
 
 /* ---------- modal de distribuidores (compra offline) ---------- */
 .rs-sup-panel { max-width: 960px; }

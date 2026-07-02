@@ -98,11 +98,26 @@ function eur(n: number) {
   return n.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function CartDrawer() {
+function DesignIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="M21 15l-5-5L5 21" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function CartDrawer({ onDesign }: { onDesign?: () => void }) {
   const { lines, count, total, open, setQty, remove, clear, setOpen } = useCart();
   const [done, setDone] = useState(false);
 
   if (!open) return null;
+
+  function openDesign() {
+    setOpen(false);        // cierra el cajón para ver el diseñador a pantalla completa
+    onDesign?.();
+  }
 
   function checkout() {
     // pago simulado: en producción, aquí iría la pasarela / creación de pedido.
@@ -137,6 +152,12 @@ export function CartDrawer() {
           <div className="rs-cart-empty">
             <p>Tu cesta está vacía.</p>
             <p className="rs-cart-hint">Pulsa «Compra online» en un producto para añadirlo.</p>
+            {onDesign && (
+              <button type="button" className="rs-cart-design" onClick={openDesign}>
+                <DesignIcon />
+                <span>Diseña tu baño</span>
+              </button>
+            )}
           </div>
         ) : (
           <>
@@ -175,6 +196,12 @@ export function CartDrawer() {
               <button className="rs-cart-checkout" onClick={checkout}>
                 Tramitar pedido
               </button>
+              {onDesign && (
+                <button type="button" className="rs-cart-design" onClick={openDesign}>
+                  <DesignIcon />
+                  <span>Diseña tu baño con estos productos</span>
+                </button>
+              )}
               <button className="rs-cart-clear" onClick={clear}>Vaciar cesta</button>
             </div>
           </>
