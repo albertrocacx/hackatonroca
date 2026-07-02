@@ -218,7 +218,7 @@ export interface ChatFilters {
 
 export type ChatEvent =
   | { type: "text"; text: string }
-  | { type: "tool"; name: string }
+  | { type: "tool"; name: string; label?: string }
   | { type: "tool_error"; name: string; error: string }
   | { type: "grid"; query: string | null; filters?: ChatFilters; data: SearchResponse }
   | { type: "done"; session_id?: string }

@@ -220,10 +220,13 @@ tienes algunas opciones a la izquierda").
 SKU): manual de usuario, guía de instalación o ficha técnica.
 
 REGLA DE BÚSQUEDA (impórtate mucho):
-- Haz UNA sola llamada a search_catalog por turno, con la consulta MÁS SIMPLE y directa \
-posible: normalmente las palabras del usuario tal cual. Si escribe "lavabos", busca \
-`query="lavabos"` y nada más. NO encadenes varias búsquedas ni hagas intentos \
-exploratorios (evita dejar la parrilla vacía).
+- Puedes hacer VARIAS llamadas a search_catalog en el mismo turno para refinar: probar \
+sinónimos, ajustar filtros, corregir una búsqueda que dio 0 o resultados poco relevantes. \
+El usuario NO ve las búsquedas intermedias: su parrilla mostrará SOLO tu ÚLTIMA búsqueda \
+con resultados. Por eso, haz que tu ÚLTIMA búsqueda sea la que mejor responde a lo que \
+pidió (si refinando empeoras, repite al final la mejor búsqueda que encontraste).
+- Empieza por la consulta MÁS SIMPLE y directa posible: normalmente las palabras del \
+usuario tal cual. Si escribe "lavabos", busca `query="lavabos"`. Refina solo si hace falta.
 - Colores, materiales, formas y descripciones (p. ej. "blanco", "mate", "redondo") van \
 en el TEXTO de `query`, NO como filtro (la búsqueda de texto los encuentra de forma \
 fiable; los filtros exactos como `finish` distinguen mayúsculas y suelen fallar). \
@@ -233,8 +236,6 @@ precio (min_price/max_price en EUR) y dimensiones (min/max_length/width/height e
 MILÍMETROS; convierte cm/m a mm, 100 cm = 1000 mm). Ejemplos: "lavabos blancos por menos \
 de 200 €" -> `query="lavabos blancos", max_price=200`; "inodoros de alto máx 100 cm" -> \
 `query="inodoros", max_height=1000`.
-- Solo haz más de una búsqueda si el usuario pide algo que de verdad lo exige (p. ej. \
-comparar dos categorías distintas), y dilo.
 
 DOCUMENTACIÓN DE UN PRODUCTO (search_manual):
 - Úsala cuando el usuario pregunte cómo usar, instalar, montar o mantener un producto \
@@ -254,6 +255,61 @@ Comportamiento:
 - Los precios son PVPR en EUR. Cita atributos reales; si falta un dato, dilo.
 - Cuando el usuario diga "estos", "los que se ven", usa el contexto [contexto] de SKUs \
 mostrados. Ofrece afinar o comparar."""
+
+
+def _fmt_num(v) -> str:
+    try:
+        return f"{float(v):g}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _fmt_cm(mm) -> str:
+    try:
+        return f"{float(mm) / 10:g} cm"
+    except (TypeError, ValueError):
+        return f"{mm} mm"
+
+
+def _search_label(inp: dict) -> str:
+    """Etiqueta legible de una búsqueda para el estado del chat:
+    'Buscando lavabos negros por menos de 200 € · alto hasta 100 cm'."""
+    parts = [f"Buscando {inp.get('query') or 'productos'}"]
+    lo, hi = inp.get("min_price"), inp.get("max_price")
+    if lo and hi:
+        parts.append(f"entre {_fmt_num(lo)} y {_fmt_num(hi)} €")
+    elif hi:
+        parts.append(f"por menos de {_fmt_num(hi)} €")
+    elif lo:
+        parts.append(f"por más de {_fmt_num(lo)} €")
+    extras = []
+    for dim, lab in (("length", "largo"), ("width", "ancho"), ("height", "alto")):
+        mn, mx = inp.get(f"min_{dim}"), inp.get(f"max_{dim}")
+        if mn and mx:
+            extras.append(f"{lab} entre {_fmt_cm(mn)} y {_fmt_cm(mx)}")
+        elif mx:
+            extras.append(f"{lab} hasta {_fmt_cm(mx)}")
+        elif mn:
+            extras.append(f"{lab} desde {_fmt_cm(mn)}")
+    for k in ("collection", "category", "subcategory"):
+        if inp.get(k):
+            extras.append(f"en {inp[k]}")
+    fin = inp.get("finish")
+    if fin:
+        extras.append(f"acabado {', '.join(fin) if isinstance(fin, list) else fin}")
+    label = " ".join(parts)
+    return f"{label} · {' · '.join(extras)}" if extras else label
+
+
+_DOCTYPE_LABEL = {"UserManual": "el manual de usuario",
+                  "InstallationManual": "la guía de instalación",
+                  "TechnicalFactSheet": "la ficha técnica"}
+
+
+def _manual_label(inp: dict) -> str:
+    doc = _DOCTYPE_LABEL.get(inp.get("doctype"), "la documentación")
+    sku = inp.get("sku")
+    return f"Consultando {doc} del producto {sku}" if sku else f"Consultando {doc}"
 
 
 def _build_prompt(text: str, view: dict | None) -> str:
@@ -293,7 +349,10 @@ async def stream_turn(text: str, session_id: str | None = None, view: dict | Non
     turn_start = len(messages)  # para deshacer el turno completo si la API falla
     messages.append({"role": "user", "content": _build_prompt(text, view)})
 
-    grid_locked = False   # se bloquea tras la 1ª búsqueda CON resultados (un intento vacío no la fija)
+    # La parrilla se actualiza UNA sola vez, al final del turno, con la última búsqueda
+    # con resultados (el agente puede refinar sin que el usuario vea los intentos).
+    best_inp = None   # última search_catalog con total > 0
+    last_inp = None   # última search_catalog (fallback si todas dieron 0)
     try:
         for _ in range(MAX_TURNS):
             async with _client.messages.stream(
@@ -317,8 +376,9 @@ async def stream_turn(text: str, session_id: str | None = None, view: dict | Non
             for block in response.content:
                 if block.type != "tool_use":
                     continue
-                yield {"type": "tool", "name": block.name}
                 inp = block.input if isinstance(block.input, dict) else {}
+                label = _manual_label(inp) if block.name == "search_manual" else _search_label(inp)
+                yield {"type": "tool", "name": block.name, "label": label}
 
                 if block.name == "search_manual":
                     try:
@@ -337,23 +397,27 @@ async def stream_turn(text: str, session_id: str | None = None, view: dict | Non
                     payload = {"total": data.get("total", 0), "results": brief}
                     tool_results.append({"type": "tool_result", "tool_use_id": block.id,
                                          "content": json.dumps(payload, ensure_ascii=False)})
-                    if not grid_locked:
-                        # mueve la parrilla: re-ejecuta la MISMA búsqueda (top 24 para la UI)
-                        # y adjunta los filtros que usó el agente para reflejarlos en el sidebar.
-                        grid = _run_search(**_search_kwargs(inp, GRID_TOP))
-                        filters = {k: v for k, v in inp.items()
-                                   if k != "query" and v not in (None, "", [])}
-                        yield {"type": "grid", "query": inp.get("query"),
-                               "filters": filters, "data": grid}
-                        # solo fijamos la parrilla cuando hay resultados; si dio 0, un 2º
-                        # intento (p. ej. mejor casing) aún puede sustituirla.
-                        if grid.get("total", 0) > 0:
-                            grid_locked = True
+                    last_inp = inp
+                    if data.get("total", 0) > 0:
+                        best_inp = inp
                 except Exception as e:  # noqa: BLE001
                     yield {"type": "tool_error", "name": block.name, "error": str(e)}
                     tool_results.append({"type": "tool_result", "tool_use_id": block.id,
                                          "content": f"Error: {e}", "is_error": True})
             messages.append({"role": "user", "content": tool_results})
+
+        # parrilla diferida: re-ejecuta la búsqueda ganadora (top 24 para la UI) y adjunta
+        # los filtros que usó el agente para reflejarlos en el sidebar.
+        winner = best_inp or last_inp
+        if winner is not None:
+            try:
+                grid = _run_search(**_search_kwargs(winner, GRID_TOP))
+                filters = {k: v for k, v in winner.items()
+                           if k != "query" and v not in (None, "", [])}
+                yield {"type": "grid", "query": winner.get("query"),
+                       "filters": filters, "data": grid}
+            except Exception as e:  # noqa: BLE001
+                yield {"type": "tool_error", "name": "search_catalog", "error": str(e)}
     except anthropic.APIStatusError as e:
         del messages[turn_start:]  # no dejar el turno a medias en el historial
         yield {"type": "error", "message": f"Error de la API de Claude ({e.status_code}): {e.message}"}

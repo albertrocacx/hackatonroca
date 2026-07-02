@@ -279,7 +279,7 @@ export default function App() {
             });
           }
         } else if (ev.type === "tool") {
-          setChatStatus(TOOL_LABEL[ev.name] ?? "");
+          setChatStatus(ev.label ?? TOOL_LABEL[ev.name] ?? "");
         } else if (ev.type === "grid") {
           asstOpen = false;                       // tras la parrilla, el próximo texto abre burbuja nueva
           const q2 = ev.query ?? submitted;
