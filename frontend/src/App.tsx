@@ -7,6 +7,7 @@ import ProductCard from "./ProductCard";
 import { useCart, CartDrawer } from "./cart";
 import LocalSuppliers from "./LocalSuppliers";
 import ProductCta from "./ProductCta";
+import Design from "./Design";
 import {
   search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED, searchByImage,
   type ProductSummary, type ProductDetail, type Suggestion, type Filter,
@@ -129,6 +130,10 @@ export default function App() {
   //   "Compra online"            -> addToCart(item)
   //   "Encuentra proveedor local"-> openLocalSuppliers(item)
   function openLocalSuppliers(item: ShopItem) { setLocalItem(item); }
+
+  // --- diseña tu baño (render IA) ---
+  const [designOpen, setDesignOpen] = useState(false);
+  const [designReady, setDesignReady] = useState(false);
 
   // --- chat IA (opcional) ---
   const [aiOpen, setAiOpen] = useState(false);
@@ -317,6 +322,7 @@ export default function App() {
     getHealth().then((h) => {
       setChatReady(!!h.chat_ready);
       setImageReady(!!h.image_ready);
+      setDesignReady(!!h.design_ready);
     }).catch(() => {});
   }, []);
 
@@ -545,6 +551,19 @@ export default function App() {
         </form>
         <button
           type="button"
+          className="rs-design-btn"
+          onClick={() => setDesignOpen(true)}
+          title="Visualiza los productos de tu cesta en un baño generado por IA"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" />
+            <path d="M21 15l-5-5L5 21" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span>Diseña tu baño</span>
+        </button>
+        <button
+          type="button"
           className="rs-cart-btn"
           onClick={() => setCartOpen(true)}
           aria-label={`Cesta (${cartCount})`}
@@ -621,6 +640,10 @@ export default function App() {
           onClose={() => setAiOpen(false)}
           onNew={newChat}
         />
+      )}
+
+      {designOpen && (
+        <Design ready={designReady} onClose={() => setDesignOpen(false)} />
       )}
 
       <CartDrawer />

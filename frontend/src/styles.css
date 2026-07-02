@@ -747,3 +747,143 @@ button { font-family: inherit; }
 .rs-imgsec-head img {
   width: 44px; height: 44px; object-fit: cover; border-radius: 8px; border: 1px solid #ddd;
 }
+
+/* ============================== Diseña tu baño ============================== */
+.rs-design-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--ink); background: #fff; color: var(--ink);
+  padding: 9px 14px; font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.rs-design-btn:hover { background: var(--tile); }
+
+.rs-design-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 45; }
+.rs-design {
+  position: fixed; inset: 24px; margin: auto; max-width: 1180px; max-height: 780px;
+  background: #fff; display: flex; flex-direction: column;
+  box-shadow: 0 24px 80px -20px rgba(0,0,0,.5);
+  animation: rs-chat-in .28s cubic-bezier(.2,.8,.2,1);
+}
+.rs-design-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 24px; border-bottom: 1px solid var(--line);
+}
+.rs-design-body {
+  display: grid; grid-template-columns: 380px 1fr; gap: 0; flex: 1; min-height: 0;
+}
+.rs-design-controls {
+  padding: 20px 24px; border-right: 1px solid var(--line); overflow-y: auto;
+}
+.rs-design-controls h3 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .12em;
+  margin: 22px 0 10px; font-weight: 600;
+}
+.rs-design-controls h3:first-of-type { margin-top: 0; }
+.rs-design-hint { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 6px 0; }
+.rs-design-warn {
+  font-size: 13px; line-height: 1.5; padding: 10px 12px; margin: 0 0 14px;
+  background: #fdf3e7; border: 1px solid #eed9b8;
+}
+.rs-design-error { font-size: 13px; color: #b3261e; line-height: 1.5; margin: 10px 0 0; }
+
+.rs-design-products { list-style: none; margin: 0; padding: 0; }
+.rs-design-products li { border-bottom: 1px solid var(--line); }
+.rs-design-products li.is-disabled { opacity: .45; }
+.rs-design-products label {
+  display: flex; align-items: center; gap: 10px; padding: 8px 0; cursor: pointer;
+}
+.rs-design-products img {
+  width: 44px; height: 44px; object-fit: contain; background: var(--tile); flex: none;
+}
+.rs-design-pname { font-size: 13px; line-height: 1.35; flex: 1; }
+.rs-design-pname em { color: var(--muted); font-style: normal; }
+.rs-design-pprice { font-size: 13px; white-space: nowrap; }
+
+.rs-design-upload {
+  width: 100%; padding: 12px; border: 1px dashed #bbb; background: #fafafa;
+  color: var(--ink); font-size: 13px; cursor: pointer;
+}
+.rs-design-upload:hover { border-color: var(--ink); }
+.rs-design-room { position: relative; }
+.rs-design-room img { width: 100%; display: block; }
+.rs-design-room button {
+  position: absolute; top: 8px; right: 8px; border: none; cursor: pointer;
+  background: rgba(0,0,0,.65); color: #fff; font-size: 12px; padding: 5px 10px;
+}
+
+.rs-design-styles { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.rs-design-styles .rs-pop-cat.is-active { background: var(--ink); color: #fff; border-color: var(--ink); }
+.rs-design-styletext {
+  width: 100%; padding: 9px 10px; border: 1px solid var(--line); font-size: 13px;
+  font-family: var(--font);
+}
+.rs-design-go { margin-top: 18px; }
+
+.rs-design-result {
+  padding: 20px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;
+}
+.rs-design-empty, .rs-design-progress {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: var(--muted); text-align: center; gap: 6px;
+}
+.rs-design-img { width: 100%; display: block; background: var(--tile); }
+
+.rs-design-refine { display: flex; gap: 8px; }
+.rs-design-refine input {
+  flex: 1; padding: 9px 10px; border: 1px solid var(--line); font-size: 13px;
+  font-family: var(--font);
+}
+.rs-design-refine button {
+  border: 1px solid var(--ink); background: var(--ink); color: #fff;
+  padding: 9px 16px; font-size: 13px; cursor: pointer;
+}
+.rs-design-refine button:disabled { opacity: .4; cursor: default; }
+
+.rs-design-strip { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; }
+.rs-design-strip li {
+  display: flex; align-items: center; gap: 8px; border: 1px solid var(--line);
+  padding: 8px 10px; width: calc(50% - 5px);
+}
+.rs-design-strip img { width: 40px; height: 40px; object-fit: contain; background: var(--tile); flex: none; }
+.rs-design-strip li > div { flex: 1; min-width: 0; }
+.rs-design-strip .rs-design-pname { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.rs-design-strip .rs-design-pprice { margin: 2px 0 0; color: var(--muted); display: block; }
+.rs-design-strip button {
+  border: 1px solid var(--ink); background: #fff; color: var(--ink);
+  padding: 6px 10px; font-size: 12px; cursor: pointer; flex: none;
+}
+.rs-design-strip button:hover { background: var(--ink); color: #fff; }
+
+.rs-design-total { font-size: 14px; margin: 0; }
+.rs-design-disclaimer { font-size: 12px; color: var(--muted); margin: 0; }
+
+@media (max-width: 900px) {
+  .rs-design { inset: 0; max-height: none; }
+  .rs-design-body { grid-template-columns: 1fr; overflow-y: auto; }
+  .rs-design-controls { border-right: none; border-bottom: 1px solid var(--line); overflow: visible; }
+  .rs-design-result { overflow: visible; }
+  .rs-design-btn span { display: none; }
+}
+
+/* --- renueva tu baño (análisis de la foto) --- */
+.rs-design-analyze {
+  width: 100%; margin-top: 10px; padding: 11px;
+  border: 1px solid var(--teal); background: var(--teal); color: #fff;
+  font-size: 13px; cursor: pointer;
+}
+.rs-design-analyze:hover { filter: brightness(1.08); }
+.rs-design-analyze:disabled { opacity: .5; cursor: default; }
+
+.rs-design-reno h4 {
+  font-size: 13px; font-weight: 600; margin: 4px 0 8px;
+  text-transform: none; letter-spacing: 0;
+}
+.rs-design-strip button.is-added {
+  background: var(--teal); border-color: var(--teal); color: #fff;
+}
+
+.rs-design-tabs { display: flex; gap: 8px; }
+.rs-design-tabs button {
+  border: 1px solid var(--line); background: #fff; color: var(--ink);
+  padding: 7px 14px; font-size: 12px; cursor: pointer;
+}
+.rs-design-tabs button.is-active { border-color: var(--ink); background: var(--ink); color: #fff; }

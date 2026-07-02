@@ -3,6 +3,7 @@ uvicorn[standard]==0.32.1
 numpy>=2.0
 model2vec>=0.3
 anthropic>=0.115           # chat IA sobre resultados vía Azure AI Foundry (necesita CLAUDE_API_KEY)
+httpx>=0.27                # diseña tu baño: gpt-image + descarga de fotos de producto (design.py)
 openai>=1.40               # cliente Azure OpenAI (embeddings) para /search semántico
 azure-search-documents>=11.5  # búsqueda vectorial/híbrida en Azure AI Search
 azure-core>=1.30

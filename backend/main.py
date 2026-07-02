@@ -33,6 +33,12 @@ try:
 except Exception:  # noqa: BLE001
     image_search = None
 
+# "Diseña tu baño" (render IA con gpt-image). Opcional como el chat.
+try:
+    import design
+except Exception:  # noqa: BLE001
+    design = None
+
 # nº de vecinos a pedir a Azure. Alto para que las facetas tengan suficiente material
 # (las facetas se calculan sobre el conjunto devuelto). Configurable por entorno.
 AZURE_K = int(os.getenv("AZURE_SEARCH_K", "120"))
@@ -153,6 +159,7 @@ print(f"[startup] productos={len(PRODUCTS)} modelos={len(BY_MODEL)} relaciones={
       f"imagenes={len(IMAGES)} suppliers={len(SUPPLIERS)}", flush=True)
 print(f"[startup] azure_search={'ok' if azure_search else 'NO'} "
       f"chat={'ok' if chat else 'NO'} chat_key={'si' if (chat and chat.API_KEY) else 'no'} "
+      f"design={'ok' if (design and design.READY) else 'NO'} "
       f"semantic={'on' if ENABLE_SEMANTIC else 'off'} AZURE_K={AZURE_K}", flush=True)
 
 @app.get("/health")
@@ -160,7 +167,8 @@ def health():
     return {"status": "ok", "products": len(PRODUCTS),
             "relations_models": len(RELATIONS),
             "chat_ready": bool(chat and chat.API_KEY),
-            "image_ready": bool(image_search and image_search.ready())}
+            "image_ready": bool(image_search and image_search.ready()),
+            "design_ready": bool(design and design.READY)}
 
 # ---------------------------------------------------------------- query understanding
 def _resolve_price_band(band, category):
@@ -602,6 +610,32 @@ def search_image(images: list[UploadFile] = File(...),
 # ---- chat IA (opcional): usa la MISMA search() de arriba como fuente de verdad ----
 if chat is not None:
     chat.configure(search)
+
+# ---- "Diseña tu baño" (opcional): renders IA sobre los índices del catálogo ----
+if design is not None:
+    design.configure(BY_SKU, IMAGES, summary, search)
+
+
+@app.post("/api/design")
+async def api_design(body: dict):
+    """Render 'Diseña tu baño' (ver design.py). Tarda ~30-90 s por imagen."""
+    if design is None:
+        raise HTTPException(503, "Diseño IA no disponible en este backend.")
+    try:
+        return await design.render(body)
+    except design.DesignError as e:
+        raise HTTPException(e.status, str(e))
+
+
+@app.post("/api/design/analyze")
+async def api_design_analyze(body: dict):
+    """Renueva tu baño: foto -> elementos detectados + candidatos Roca por elemento."""
+    if design is None:
+        raise HTTPException(503, "Diseño IA no disponible en este backend.")
+    try:
+        return await design.analyze(body)
+    except design.DesignError as e:
+        raise HTTPException(e.status, str(e))
 
 
 @app.post("/api/chat")

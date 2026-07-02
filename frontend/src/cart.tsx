@@ -20,7 +20,7 @@ interface CartCtx {
   count: number;              // nº total de unidades
   total: number;              // suma PVPR * qty
   open: boolean;
-  addToCart: (item: ShopItem, qty?: number) => void;
+  addToCart: (item: ShopItem, qty?: number, openDrawer?: boolean) => void;
   setQty: (sku: string, qty: number) => void;
   remove: (sku: string) => void;
   clear: () => void;
@@ -49,7 +49,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     } catch { /* cuota llena / modo privado: ignorar */ }
   }, [lines]);
 
-  const addToCart = useCallback((item: ShopItem, qty = 1) => {
+  const addToCart = useCallback((item: ShopItem, qty = 1, openDrawer = true) => {
     setLines((prev) => {
       const i = prev.findIndex((l) => l.item.sku === item.sku);
       if (i === -1) return [...prev, { item, qty }];
@@ -57,7 +57,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
       next[i] = { ...next[i], qty: next[i].qty + qty };
       return next;
     });
-    setOpen(true);   // abre el cajón al añadir, para dar feedback inmediato
+    // abre el cajón al añadir para dar feedback, salvo que el llamante lo evite
+    // (p. ej. añadir varios productos seguidos desde "Diseña tu baño")
+    if (openDrawer) setOpen(true);
   }, []);
 
   const setQty = useCallback((sku: string, qty: number) => {
