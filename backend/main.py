@@ -794,7 +794,9 @@ def _filter_by_text(sku_scores, q):
     intención restantes por substring (AND) contra SEARCH_INDEX."""
     parsed = parse_query(q)
     sel = _sel_from_filters(parsed["filters"])
-    tokens = [t for t in parsed["intent_phrase"].lower().split() if t]
+    # _norm (no .lower()): los blobs de SEARCH_INDEX están sin acentos, así que los
+    # tokens deben normalizarse igual o "grifería"/"cerámica" no casarían nunca.
+    tokens = [t for t in _norm(parsed["intent_phrase"]).split() if t]
     out = {}
     for sku, score in sku_scores.items():
         p = BY_SKU.get(sku)
