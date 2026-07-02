@@ -9,7 +9,7 @@ from collections import defaultdict, Counter
 from contextlib import asynccontextmanager
 from typing import Optional
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -31,6 +31,19 @@ try:
     import query_interpreter
 except Exception:  # noqa: BLE001
     query_interpreter = None
+
+# búsqueda por imagen (endpoint DINOv2 en Azure ML). Opcional: sin el módulo o sin
+# API key, la app funciona igual y /health expone image_ready=false.
+try:
+    import image_search
+except Exception:  # noqa: BLE001
+    image_search = None
+
+# "Diseña tu baño" (render IA con gpt-image). Opcional como el chat.
+try:
+    import design
+except Exception:  # noqa: BLE001
+    design = None
 
 # nº de vecinos a pedir a Azure. Alto para que las facetas tengan suficiente material
 # (las facetas se calculan sobre el conjunto devuelto). Configurable por entorno.
@@ -147,11 +160,21 @@ app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
 
+# resumen de arranque: qué datos y qué motores quedaron disponibles (visible en logs de Railway)
+print(f"[startup] productos={len(PRODUCTS)} modelos={len(BY_MODEL)} relaciones={len(RELATIONS)} "
+      f"imagenes={len(IMAGES)} suppliers={len(SUPPLIERS)}", flush=True)
+print(f"[startup] azure_search={'ok' if azure_search else 'NO'} "
+      f"chat={'ok' if chat else 'NO'} chat_key={'si' if (chat and chat.API_KEY) else 'no'} "
+      f"design={'ok' if (design and design.READY) else 'NO'} "
+      f"semantic={'on' if ENABLE_SEMANTIC else 'off'} AZURE_K={AZURE_K}", flush=True)
+
 @app.get("/health")
 def health():
     return {"status": "ok", "products": len(PRODUCTS),
             "relations_models": len(RELATIONS),
-            "chat_ready": bool(chat and chat.API_KEY)}
+            "chat_ready": bool(chat and chat.API_KEY),
+            "image_ready": bool(image_search and image_search.ready()),
+            "design_ready": bool(design and design.READY)}
 
 # ---------------------------------------------------------------- query understanding
 def _resolve_price_band(band, category):
@@ -468,6 +491,10 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
         },
     }
 
+    if q_clean:
+        print(f"[/search] q={q_clean!r} -> modelos={len(order)} (scope={len(scope)}) limit={limit}",
+              flush=True)
+
     return {"query": q, "total": len(order),
             "results": [build_card(m) for m in order[:limit]],
             "facets": facets}
@@ -723,9 +750,148 @@ def interpret_endpoint(q: str = ""):
     return result
 
 
+# ---------------------------------------------------------------- búsqueda por imagen
+MAX_PHOTOS = 6
+MAX_PHOTO_MB = 10
+IMAGE_TOP_K = 50      # candidatos por foto: alto para que el filtro de texto tenga material
+
+
+def _sel_from_filters(filters):
+    """Filtros de parse_query (acabado/precio) -> formato 'sel' que entiende matches()."""
+    sel = {"categories": [], "collections": [], "finishes": [],
+           "price": (None, None), "length": (None, None),
+           "width": (None, None), "height": (None, None)}
+    for f in filters:
+        if f["type"] == "finish":
+            sel["finishes"] = f.get("values") or []
+        elif f["type"] == "price":
+            sel["price"] = (f.get("min_price"), f.get("max_price"))
+    return sel
+
+
+def _filter_by_text(sku_scores, q):
+    """El texto FILTRA los candidatos visuales (el score visual sigue ordenando):
+    filtros estructurados de parse_query (acabado/banda de precio) + los tokens de
+    intención restantes por substring (AND) contra SEARCH_INDEX."""
+    parsed = parse_query(q)
+    sel = _sel_from_filters(parsed["filters"])
+    tokens = [t for t in parsed["intent_phrase"].lower().split() if t]
+    out = {}
+    for sku, score in sku_scores.items():
+        p = BY_SKU.get(sku)
+        if not p or not matches(p, sel):
+            continue
+        blob = SEARCH_INDEX.get(sku, "")
+        if tokens and not all(t in blob for t in tokens):
+            continue
+        out[sku] = score
+    return out
+
+
+def _image_cards(sku_scores, limit=30):
+    """{sku: score} -> (total_modelos, ModelCards ordenadas por score). Score de modelo =
+    máx de sus SKUs; default = la variante con mejor score. Los recambios SÍ entran
+    (identificar un recambio por foto es el caso de uso principal)."""
+    best = {}                                # model -> (score, sku)
+    for sku, score in sku_scores.items():
+        p = BY_SKU.get(sku)
+        m = p.get("model") if p else None
+        if not m:
+            continue
+        if m not in best or score > best[m][0]:
+            best[m] = (score, sku)
+    order = sorted(best, key=lambda m: -best[m][0])
+    cards = []
+    for m in order[:limit]:
+        variants = BY_MODEL[m]
+        # el fallback 0 es inalcanzable por construccion (best[m][1] sale del mismo
+        # BY_SKU que puebla BY_MODEL); protege solo ante datos inconsistentes futuros
+        default = next((i for i, v in enumerate(variants) if v["sku"] == best[m][1]), 0)
+        rep = variants[default]
+        cards.append({"model": m, "title": rep.get("title"),
+                      "collection": rep.get("collection"), "category": rep.get("category"),
+                      "default": default,
+                      "variants": [variant_summary(v) for v in variants]})
+    return len(order), cards
+
+
+@app.post("/search/image")
+def search_image(images: list[UploadFile] = File(...),
+                 q: str = Form(""), mode: str = Form("same")):
+    """Busca productos por foto(s) vía el endpoint DINOv2. mode='same' fusiona las
+    fotos en un ranking (mismo producto, varios ángulos); mode='distinct' devuelve
+    un ranking por foto. `q` opcional refina (filtra) los matches visuales."""
+    if image_search is None or not image_search.ready():
+        raise HTTPException(503, "Búsqueda por imagen no configurada (falta IMAGE_SEARCH_API_KEY)")
+    if not 1 <= len(images) <= MAX_PHOTOS:
+        raise HTTPException(400, f"Sube entre 1 y {MAX_PHOTOS} fotos")
+    blobs = []
+    for i, up in enumerate(images, 1):
+        if up.content_type not in ("image/jpeg", "image/png", "image/webp"):
+            raise HTTPException(400, f"Foto {i}: formato no soportado ({up.content_type})")
+        data = up.file.read()
+        if not data:
+            raise HTTPException(400, f"Foto {i}: fichero vacío")
+        if len(data) > MAX_PHOTO_MB * 1024 * 1024:
+            raise HTTPException(400, f"Foto {i}: supera {MAX_PHOTO_MB}MB")
+        blobs.append(data)
+
+    try:
+        rankings = image_search.query_images(blobs, top_k=IMAGE_TOP_K)
+    except image_search.EndpointError as e:
+        raise HTTPException(400, f"El servicio no pudo procesar una foto: {e}")
+    except Exception as e:  # noqa: BLE001 — endpoint caído/timeout: error legible
+        print(f"[/search/image] DINO FALLO ({e!r})", flush=True)
+        raise HTTPException(502, "El servicio de búsqueda por imagen no responde; inténtalo de nuevo")
+
+    q_clean = q.strip()
+    if mode == "distinct":
+        groups = []
+        for i, rk in enumerate(rankings, 1):
+            cand = _filter_by_text(rk, q_clean) if q_clean else rk
+            total, cards = _image_cards(cand)
+            groups.append({"photo": i, "total": total, "results": cards})
+        print(f"[/search/image] fotos={len(blobs)} q={q_clean!r} mode=distinct "
+              f"-> {[g['total'] for g in groups]}", flush=True)
+        return {"query": q, "mode": "distinct", "groups": groups}
+
+    fused = image_search.fuse_same(rankings)
+    cand = _filter_by_text(fused, q_clean) if q_clean else fused
+    total, cards = _image_cards(cand)
+    print(f"[/search/image] fotos={len(blobs)} q={q_clean!r} candidatos={len(fused)} "
+          f"-> modelos={total}", flush=True)
+    return {"query": q, "total": total, "results": cards, "facets": None}
+
+
 # ---- chat IA (opcional): usa la MISMA search() de arriba como fuente de verdad ----
 if chat is not None:
     chat.configure(search)
+
+# ---- "Diseña tu baño" (opcional): renders IA sobre los índices del catálogo ----
+if design is not None:
+    design.configure(BY_SKU, IMAGES, summary, search)
+
+
+@app.post("/api/design")
+async def api_design(body: dict):
+    """Render 'Diseña tu baño' (ver design.py). Tarda ~30-90 s por imagen."""
+    if design is None:
+        raise HTTPException(503, "Diseño IA no disponible en este backend.")
+    try:
+        return await design.render(body)
+    except design.DesignError as e:
+        raise HTTPException(e.status, str(e))
+
+
+@app.post("/api/design/analyze")
+async def api_design_analyze(body: dict):
+    """Renueva tu baño: foto -> elementos detectados + candidatos Roca por elemento."""
+    if design is None:
+        raise HTTPException(503, "Diseño IA no disponible en este backend.")
+    try:
+        return await design.analyze(body)
+    except design.DesignError as e:
+        raise HTTPException(e.status, str(e))
 
 
 @app.post("/api/chat")

@@ -255,9 +255,70 @@ export async function nearbySuppliers(
 }
 
 // ---- Chat IA (opcional) ----
-export async function getHealth(): Promise<{ chat_ready: boolean }> {
+export async function getHealth(): Promise<{
+  chat_ready: boolean; image_ready?: boolean; design_ready?: boolean;
+}> {
   const r = await fetch(`${API}/health`);
   if (!r.ok) throw new Error("health");
+  return r.json();
+}
+
+// ---- Diseña tu baño (render IA) ----
+export interface DesignRequest {
+  skus: string[];
+  room_image?: string | null;   // dataURL/base64 de la foto del espacio (opcional)
+  style?: string | null;
+  instruction?: string | null;  // con session_id y sin skus: itera el render anterior
+  session_id?: string | null;
+}
+
+export interface DesignResponse {
+  session_id: string;
+  image_b64: string;
+  products: ProductSummary[];
+  skipped: string[];            // SKUs sin foto de catálogo (no se pudieron usar)
+}
+
+// Renueva tu baño: foto del baño actual -> elementos detectados + candidatos Roca.
+export interface RenewalProduct {
+  sku: string;
+  title: string | null;
+  image: string | null;
+  price_rrp: number | null;
+  finish: string | null;
+  collection: string | null;
+}
+export interface RenewalItem {
+  label: string;                // lo detectado: "lavabo de pedestal blanco"
+  query: string;                // búsqueda usada contra el catálogo
+  products: RenewalProduct[];
+}
+
+export async function analyzeBathroom(room_image: string): Promise<{ items: RenewalItem[] }> {
+  const r = await fetch(`${API}/api/design/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ room_image }),
+  });
+  if (!r.ok) {
+    let msg = "Error analizando el baño";
+    try { msg = (await r.json()).detail ?? msg; } catch { /* cuerpo no JSON */ }
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+export async function designBathroom(req: DesignRequest): Promise<DesignResponse> {
+  const r = await fetch(`${API}/api/design`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!r.ok) {
+    let msg = "Error generando el diseño";
+    try { msg = (await r.json()).detail ?? msg; } catch { /* cuerpo no JSON */ }
+    throw new Error(msg);
+  }
   return r.json();
 }
 
@@ -311,4 +372,30 @@ export async function* streamChat(req: ChatRequest): AsyncGenerator<ChatEvent> {
   }
   const tail = buf.trim();
   if (tail) yield JSON.parse(tail) as ChatEvent;
+}
+
+// ---- Búsqueda por imagen (endpoint DINOv2 vía backend) ----
+export type ImageMode = "same" | "distinct";
+
+export interface ImageSearchGroup { photo: number; total: number; results: ModelCard[]; }
+export interface ImageSearchSameResponse {
+  query: string; total: number; results: ModelCard[]; facets: null;
+}
+export interface ImageSearchDistinctResponse {
+  query: string; mode: "distinct"; groups: ImageSearchGroup[];
+}
+
+export async function searchByImage(
+  photos: Blob[], q: string, mode: ImageMode
+): Promise<ImageSearchSameResponse | ImageSearchDistinctResponse> {
+  const fd = new FormData();
+  photos.forEach((b, i) => fd.append("images", b, `foto-${i + 1}.jpg`));
+  if (q) fd.set("q", q);
+  fd.set("mode", mode);
+  const r = await fetch(`${API}/search/image`, { method: "POST", body: fd });
+  if (!r.ok) {
+    const detail = await r.json().then((j) => j.detail).catch(() => null);
+    throw new Error(detail || "Error en la búsqueda por imagen");
+  }
+  return r.json();
 }

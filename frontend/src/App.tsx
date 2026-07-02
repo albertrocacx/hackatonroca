@@ -7,11 +7,15 @@ import ProductCard from "./ProductCard";
 import { useCart, CartDrawer } from "./cart";
 import LocalSuppliers from "./LocalSuppliers";
 import ProductCta from "./ProductCta";
+import Design from "./Design";
 import {
-  search, suggest, interpret, selectedFromFilters, getProduct, getHealth, streamChat, EMPTY_SELECTED,
+  search, suggest, interpret, selectedFromFilters, getProduct, getHealth, streamChat, EMPTY_SELECTED, searchByImage,
   type ProductSummary, type ProductDetail, type Suggestion, type Filter, type AppliedTag,
   type Selected, type Facets as FacetsData, type ModelCard, type ShopItem,
+  type ImageSearchGroup,
 } from "./api";
+import { ImageDropPanel, CameraIcon, type Photo } from "./ImageSearch";
+import { downscalePhoto } from "./imageUtils";
 
 const CHAT_INTRO =
   "Hola. Dime qué buscas —un lavabo, un plato de ducha, una grifería— y te muestro opciones en la parrilla. Puedo filtrar por precio o acabado y afinar la búsqueda.";
@@ -110,6 +114,14 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // --- búsqueda por imagen ---
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [imgPanelOpen, setImgPanelOpen] = useState(false);
+  const [sameProduct, setSameProduct] = useState(true);
+  const [imageGroups, setImageGroups] = useState<ImageSearchGroup[] | null>(null);
+  const [imageReady, setImageReady] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+
   // --- compra: carrito online + buscador de distribuidores offline ---
   const { addToCart, count: cartCount, setOpen: setCartOpen } = useCart();
   const [localItem, setLocalItem] = useState<ShopItem | null>(null);
@@ -118,6 +130,10 @@ export default function App() {
   //   "Compra online"            -> addToCart(item)
   //   "Encuentra proveedor local"-> openLocalSuppliers(item)
   function openLocalSuppliers(item: ShopItem) { setLocalItem(item); }
+
+  // --- diseña tu baño (render IA) ---
+  const [designOpen, setDesignOpen] = useState(false);
+  const [designReady, setDesignReady] = useState(false);
 
   // --- chat IA (opcional) ---
   const [aiOpen, setAiOpen] = useState(false);
@@ -192,6 +208,7 @@ export default function App() {
   // Única función que llama al backend. No toca la selección de facetas (sólo la usa).
   async function runSearch(text: string, sc: string | null, s: Selected) {
     setLoading(true); setError(null); setDetail(null); setOpen(false);
+    setImageGroups(null);                    // una búsqueda de texto sale del modo imagen
     try {
       const r = await search(text, s, sc);
       setResults(r.results); setTotal(r.total); setFacets(r.facets);
@@ -202,10 +219,69 @@ export default function App() {
     }
   }
 
-  // Nueva búsqueda desde el buscador: interpreta la frase (LLM) -> corrige erratas y
-  // aplica filtros (categoría, color, precio, tamaño) al sidebar y como tags.
+  const MAX_PHOTOS = 6;
+
+  async function addPhotos(files: FileList | File[]) {
+    const list = Array.from(files).filter((f) => f.type.startsWith("image/"));
+    const room = MAX_PHOTOS - photos.length;
+    const add: Photo[] = [];
+    for (const f of list.slice(0, room)) {
+      try {
+        const blob = await downscalePhoto(f);
+        add.push({ id: `${f.name}-${f.size}-${Math.random()}`, blob, url: URL.createObjectURL(blob) });
+      } catch { /* foto ilegible: se ignora */ }
+    }
+    if (add.length) { setPhotos((p) => [...p, ...add]); setImgPanelOpen(true); }
+  }
+
+  function removePhoto(id: string) {
+    setPhotos((p) => {
+      const ph = p.find((x) => x.id === id);
+      if (ph) URL.revokeObjectURL(ph.url);
+      return p.filter((x) => x.id !== id);
+    });
+    // las secciones por foto dejan de corresponder a las fotos actuales -> salir del modo distinct
+    if (imageGroups) {
+      setImageGroups(null);
+      setResults([]); setTotal(null); setSubmitted("");
+    }
+  }
+
+  // Búsqueda por imagen: las fotos mandan; el texto (si hay) filtra los matches visuales.
+  async function runImageSearch(text: string) {
+    setLoading(true); setError(null); setDetail(null); setOpen(false); setImgPanelOpen(false);
+    try {
+      const mode = photos.length > 1 && !sameProduct ? "distinct" : "same";
+      const r = await searchByImage(photos.map((p) => p.blob), text.trim(), mode);
+      const nf = `${photos.length} foto${photos.length > 1 ? "s" : ""}`;
+      setSubmitted(text.trim() ? `${text.trim()} · ${nf}` : `Búsqueda por imagen (${nf})`);
+      setFacets(null);                       // sin sidebar en modo imagen
+      if ("groups" in r) {
+        setImageGroups(r.groups);
+        setResults([]);
+        setTotal(r.groups.reduce((n, g) => n + g.total, 0));
+      } else {
+        setImageGroups(null);
+        setResults(r.results);
+        setTotal(r.total);
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Nueva búsqueda desde el buscador: con fotos manda la imagen; si no, interpreta la
+  // frase (LLM) -> corrige erratas y aplica filtros (categoría, color, precio, tamaño)
+  // al sidebar y como tags.
   async function doSearch(e: FormEvent) {
     e.preventDefault();
+    if (photos.length > 0) {
+      setAppliedTags([]); setCorrection(null);   // en modo imagen no hay tags NL
+      runImageSearch(q);
+      return;
+    }
     const term = q.trim();
     if (!term) return;
     setOpen(false); setLoading(true); setError(null); setDetail(null);
@@ -328,7 +404,11 @@ export default function App() {
   }
 
   useEffect(() => {
-    getHealth().then((h) => setChatReady(!!h.chat_ready)).catch(() => {});
+    getHealth().then((h) => {
+      setChatReady(!!h.chat_ready);
+      setImageReady(!!h.image_ready);
+      setDesignReady(!!h.design_ready);
+    }).catch(() => {});
   }, []);
 
   // Envía un turno al agente y consume el stream NDJSON, actualizando chat + parrilla.
@@ -362,6 +442,7 @@ export default function App() {
           setChatStatus(ev.label ?? TOOL_LABEL[ev.name] ?? "");
         } else if (ev.type === "grid") {
           asstOpen = false;                       // tras la parrilla, el próximo texto abre burbuja nueva
+          setImageGroups(null);   // el chat pinta la parrilla normal: salir del modo por-foto
           const q2 = ev.query ?? submitted;
           setResults(ev.data.results);
           setTotal(ev.data.total);
@@ -433,16 +514,32 @@ export default function App() {
           <img src="https://www.roca.es/documents/20126/346080475/roca-logo.svg/4dc29d13-1df3-b628-786b-7c63db57cdcd?t=1753429104544" alt="Roca" />
         </a>
         <form className="rs-searchform" onSubmit={doSearch}>
-          <div className="rs-searchbox" ref={boxRef}>
+          <div
+            className={`rs-searchbox${dragOver ? " is-dragover" : ""}`}
+            ref={boxRef}
+            onDragOver={(e) => { if (imageReady) { e.preventDefault(); setDragOver(true); } }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              if (!imageReady) return;
+              e.preventDefault(); setDragOver(false);
+              if (e.dataTransfer.files.length) addPhotos(e.dataTransfer.files);
+            }}
+          >
             <button type="submit" className="rs-search-ico" aria-label="Buscar">
               <SearchIcon />
             </button>
+            {photos.map((p) => (
+              <span key={p.id} className="rs-photo-chip">
+                <img src={p.url} alt="" />
+                <button type="button" aria-label="Quitar foto" onClick={() => removePhoto(p.id)}>×</button>
+              </span>
+            ))}
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={onKeyDown}
               onFocus={() => setOpen(true)}
-              placeholder="Introduce tu búsqueda"
+              placeholder={photos.length ? "Añade texto para refinar (opcional)" : "Introduce tu búsqueda"}
               aria-label="Buscar"
               autoFocus
             />
@@ -455,7 +552,19 @@ export default function App() {
               </button>
             )}
 
-            {open && q.trim() === "" && (
+            {imageReady && (
+              <button
+                type="button"
+                className="rs-cam-btn"
+                aria-label="Buscar por imagen"
+                title="Buscar por imagen"
+                onClick={() => { setImgPanelOpen((v) => !v); setOpen(false); }}
+              >
+                <CameraIcon />
+              </button>
+            )}
+
+            {!imgPanelOpen && open && q.trim() === "" && (
               <div className="rs-suggest">
                 <div className="rs-suggest-head">Sugerencias</div>
                 {POPULAR_SEARCHES.map((term) => (
@@ -487,7 +596,7 @@ export default function App() {
               </div>
             )}
 
-            {open && q.trim() !== "" && (suggestions.length > 0 || autoFilters.length > 0) && (
+            {!imgPanelOpen && open && q.trim() !== "" && (suggestions.length > 0 || autoFilters.length > 0) && (
               <div className="rs-suggest">
                 {autoFilters.length > 0 && (
                   <div className="rs-suggest-filters">
@@ -515,6 +624,18 @@ export default function App() {
                 ))}
               </div>
             )}
+
+            {imgPanelOpen && (
+              <ImageDropPanel
+                photos={photos}
+                sameProduct={sameProduct}
+                busy={loading}
+                onAdd={addPhotos}
+                onRemove={removePhoto}
+                onToggleSame={setSameProduct}
+                onSearch={() => runImageSearch(q)}
+              />
+            )}
           </div>
           <button type="submit" className="rs-search-btn">Buscar</button>
           <button type="button" className="rs-ai-btn" onClick={openAI} title="Buscar y conversar con IA" aria-label="Búsqueda IA">
@@ -522,6 +643,19 @@ export default function App() {
             <span className="rs-ai-label">Búsqueda IA</span>
           </button>
         </form>
+        <button
+          type="button"
+          className="rs-design-btn"
+          onClick={() => setDesignOpen(true)}
+          title="Visualiza los productos de tu cesta en un baño generado por IA"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" />
+            <path d="M21 15l-5-5L5 21" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span>Diseña tu baño</span>
+        </button>
         <button
           type="button"
           className="rs-cart-btn"
@@ -560,7 +694,7 @@ export default function App() {
             <div className="rs-filters-bar">
               <button
                 type="button"
-                className="rs-filters-toggle"
+                className="rs-tagsbar-toggle"
                 onClick={() => setTagsHidden((h) => !h)}
               >
                 {tagsHidden ? "Mostrar filtros →" : "Ocultar filtros ←"}
@@ -609,17 +743,40 @@ export default function App() {
             <p className="rs-state">No se han encontrado productos para «{submitted}».</p>
           )}
 
-          <div className="rs-grid">
-            {results.map((c) => (
-              <ProductCard
-                key={c.model}
-                card={c}
-                onOpen={openProduct}
-                onBuyOnline={addToCart}
-                onFindLocal={openLocalSuppliers}
-              />
-            ))}
-          </div>
+          {imageGroups ? (
+            imageGroups.map((g, i) => (
+              <section key={g.photo} className="rs-imgsec">
+                <h2 className="rs-imgsec-head">
+                  {photos[i] && <img src={photos[i].url} alt={`Foto ${g.photo}`} />}
+                  <span>Foto {g.photo} · {g.total} resultado{g.total === 1 ? "" : "s"}</span>
+                </h2>
+                {g.total === 0 && <p className="rs-state">Sin resultados para esta foto.</p>}
+                <div className="rs-grid">
+                  {g.results.map((c) => (
+                    <ProductCard
+                      key={`${g.photo}-${c.model}`}
+                      card={c}
+                      onOpen={openProduct}
+                      onBuyOnline={addToCart}
+                      onFindLocal={openLocalSuppliers}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))
+          ) : (
+            <div className="rs-grid">
+              {results.map((c) => (
+                <ProductCard
+                  key={c.model}
+                  card={c}
+                  onOpen={openProduct}
+                  onBuyOnline={addToCart}
+                  onFindLocal={openLocalSuppliers}
+                />
+              ))}
+            </div>
+          )}
         </main>
       </div>
       </div>
@@ -633,6 +790,10 @@ export default function App() {
           onClose={() => setAiOpen(false)}
           onNew={newChat}
         />
+      )}
+
+      {designOpen && (
+        <Design ready={designReady} onClose={() => setDesignOpen(false)} />
       )}
 
       <CartDrawer />
