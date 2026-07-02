@@ -8,10 +8,13 @@ import { useCart, CartDrawer } from "./cart";
 import LocalSuppliers from "./LocalSuppliers";
 import ProductCta from "./ProductCta";
 import {
-  search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED,
+  search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED, searchByImage,
   type ProductSummary, type ProductDetail, type Suggestion, type Filter,
   type Selected, type Facets as FacetsData, type ModelCard, type ShopItem,
+  type ImageSearchGroup,
 } from "./api";
+import { ImageDropPanel, CameraIcon, type Photo } from "./ImageSearch";
+import { downscalePhoto } from "./imageUtils";
 
 const CHAT_INTRO =
   "Hola. Dime qué buscas —un lavabo, un plato de ducha, una grifería— y te muestro opciones en la parrilla. Puedo filtrar por precio o acabado y afinar la búsqueda.";
@@ -110,6 +113,15 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // --- búsqueda por imagen ---
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [imgPanelOpen, setImgPanelOpen] = useState(false);
+  const [sameProduct, setSameProduct] = useState(true);
+  const [imageGroups, setImageGroups] = useState<ImageSearchGroup[] | null>(null);
+  void imageGroups;                        // consumido por el grid en modo distinct (Task 6)
+  const [imageReady, setImageReady] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+
   // --- compra: carrito online + buscador de distribuidores offline ---
   const { addToCart, count: cartCount, setOpen: setCartOpen } = useCart();
   const [localItem, setLocalItem] = useState<ShopItem | null>(null);
@@ -184,6 +196,7 @@ export default function App() {
   // Única función que llama al backend. No toca la selección de facetas (sólo la usa).
   async function runSearch(text: string, sc: string | null, s: Selected) {
     setLoading(true); setError(null); setDetail(null); setOpen(false);
+    setImageGroups(null);                    // una búsqueda de texto sale del modo imagen
     try {
       const r = await search(text, s, sc);
       setResults(r.results); setTotal(r.total); setFacets(r.facets);
@@ -194,9 +207,58 @@ export default function App() {
     }
   }
 
+  const MAX_PHOTOS = 6;
+
+  async function addPhotos(files: FileList | File[]) {
+    const list = Array.from(files).filter((f) => f.type.startsWith("image/"));
+    const room = MAX_PHOTOS - photos.length;
+    const add: Photo[] = [];
+    for (const f of list.slice(0, room)) {
+      try {
+        const blob = await downscalePhoto(f);
+        add.push({ id: `${f.name}-${f.size}-${Math.random()}`, blob, url: URL.createObjectURL(blob) });
+      } catch { /* foto ilegible: se ignora */ }
+    }
+    if (add.length) { setPhotos((p) => [...p, ...add]); setImgPanelOpen(true); }
+  }
+
+  function removePhoto(id: string) {
+    setPhotos((p) => {
+      const ph = p.find((x) => x.id === id);
+      if (ph) URL.revokeObjectURL(ph.url);
+      return p.filter((x) => x.id !== id);
+    });
+  }
+
+  // Búsqueda por imagen: las fotos mandan; el texto (si hay) filtra los matches visuales.
+  async function runImageSearch(text: string) {
+    setLoading(true); setError(null); setDetail(null); setOpen(false); setImgPanelOpen(false);
+    try {
+      const mode = photos.length > 1 && !sameProduct ? "distinct" : "same";
+      const r = await searchByImage(photos.map((p) => p.blob), text.trim(), mode);
+      const nf = `${photos.length} foto${photos.length > 1 ? "s" : ""}`;
+      setSubmitted(text.trim() ? `${text.trim()} · ${nf}` : `Búsqueda por imagen (${nf})`);
+      setFacets(null);                       // sin sidebar en modo imagen
+      if ("groups" in r) {
+        setImageGroups(r.groups);
+        setResults([]);
+        setTotal(r.groups.reduce((n, g) => n + g.total, 0));
+      } else {
+        setImageGroups(null);
+        setResults(r.results);
+        setTotal(r.total);
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   // Nueva búsqueda desde el buscador: fija SCOPE y resetea facetas (semilla = filtros auto)
   function doSearch(e: FormEvent) {
     e.preventDefault();
+    if (photos.length > 0) { runImageSearch(q); return; }
     if (!q.trim()) return;
     const s = withAutoFilters(EMPTY_SELECTED, autoFilters);
     setBaseText(q); setSubcat(null); setSel(s); setSubmitted(q);
@@ -248,7 +310,10 @@ export default function App() {
   }
 
   useEffect(() => {
-    getHealth().then((h) => setChatReady(!!h.chat_ready)).catch(() => {});
+    getHealth().then((h) => {
+      setChatReady(!!h.chat_ready);
+      setImageReady(!!h.image_ready);
+    }).catch(() => {});
   }, []);
 
   // Envía un turno al agente y consume el stream NDJSON, actualizando chat + parrilla.
@@ -346,14 +411,30 @@ export default function App() {
           <img src="https://www.roca.es/documents/20126/346080475/roca-logo.svg/4dc29d13-1df3-b628-786b-7c63db57cdcd?t=1753429104544" alt="Roca" />
         </a>
         <form className="rs-searchform" onSubmit={doSearch}>
-          <div className="rs-searchbox" ref={boxRef}>
+          <div
+            className={`rs-searchbox${dragOver ? " is-dragover" : ""}`}
+            ref={boxRef}
+            onDragOver={(e) => { if (imageReady) { e.preventDefault(); setDragOver(true); } }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              if (!imageReady) return;
+              e.preventDefault(); setDragOver(false);
+              if (e.dataTransfer.files.length) addPhotos(e.dataTransfer.files);
+            }}
+          >
             <SearchIcon />
+            {photos.map((p) => (
+              <span key={p.id} className="rs-photo-chip">
+                <img src={p.url} alt="" />
+                <button type="button" aria-label="Quitar foto" onClick={() => removePhoto(p.id)}>×</button>
+              </span>
+            ))}
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={onKeyDown}
               onFocus={() => setOpen(true)}
-              placeholder="Introduce tu búsqueda"
+              placeholder={photos.length ? "Añade texto para refinar (opcional)" : "Introduce tu búsqueda"}
               aria-label="Buscar"
               autoFocus
             />
@@ -366,7 +447,19 @@ export default function App() {
               </button>
             )}
 
-            {open && q.trim() === "" && (
+            {imageReady && (
+              <button
+                type="button"
+                className="rs-cam-btn"
+                aria-label="Buscar por imagen"
+                title="Buscar por imagen"
+                onClick={() => { setImgPanelOpen((v) => !v); setOpen(false); }}
+              >
+                <CameraIcon />
+              </button>
+            )}
+
+            {!imgPanelOpen && open && q.trim() === "" && (
               <div className="rs-suggest">
                 <div className="rs-suggest-head">Sugerencias</div>
                 {POPULAR_SEARCHES.map((term) => (
@@ -398,7 +491,7 @@ export default function App() {
               </div>
             )}
 
-            {open && q.trim() !== "" && (suggestions.length > 0 || autoFilters.length > 0) && (
+            {!imgPanelOpen && open && q.trim() !== "" && (suggestions.length > 0 || autoFilters.length > 0) && (
               <div className="rs-suggest">
                 {autoFilters.length > 0 && (
                   <div className="rs-suggest-filters">
@@ -425,6 +518,18 @@ export default function App() {
                   </button>
                 ))}
               </div>
+            )}
+
+            {imgPanelOpen && (
+              <ImageDropPanel
+                photos={photos}
+                sameProduct={sameProduct}
+                busy={loading}
+                onAdd={addPhotos}
+                onRemove={removePhoto}
+                onToggleSame={setSameProduct}
+                onSearch={() => runImageSearch(q)}
+              />
             )}
           </div>
           <button type="submit" className="rs-search-btn">Buscar</button>

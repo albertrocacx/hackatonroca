@@ -683,3 +683,67 @@ button { font-family: inherit; }
   display: flex; gap: 12px; justify-content: center; align-items: center; margin-top: 18px;
 }
 .rs-sup-error-actions .rs-cart-clear { width: auto; padding: 0; }
+
+/* ---------- Búsqueda por imagen ---------- */
+.rs-searchbox.is-dragover { outline: 2px dashed #c00; outline-offset: -2px; }
+
+.rs-cam-btn {
+  display: inline-flex; align-items: center; border: 0; background: none;
+  padding: 4px; cursor: pointer; color: #1a1a1a;
+}
+.rs-cam-btn:hover { color: #c00; }
+
+.rs-photo-chip {
+  position: relative; display: inline-flex; flex: 0 0 auto;
+  width: 34px; height: 34px; border-radius: 6px; overflow: hidden;
+  border: 1px solid #ddd; margin-right: 4px;
+}
+.rs-photo-chip img { width: 100%; height: 100%; object-fit: cover; }
+.rs-photo-chip button {
+  position: absolute; top: 0; right: 0; width: 14px; height: 14px;
+  border: 0; border-radius: 0 0 0 6px; background: rgba(0,0,0,.55); color: #fff;
+  font-size: 11px; line-height: 1; cursor: pointer; padding: 0;
+}
+
+.rs-imgpanel { padding: 14px; }
+.rs-dropzone {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 22px 14px; border: 2px dashed #ccc; border-radius: 10px;
+  cursor: pointer; text-align: center; color: #444;
+}
+.rs-dropzone:hover { border-color: #c00; color: #c00; }
+.rs-dropzone p { margin: 0; font-size: 14px; }
+.rs-dropzone-hint { font-size: 12px; color: #999; }
+
+.rs-drop-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.rs-drop-thumb {
+  position: relative; width: 64px; height: 64px; border-radius: 8px;
+  overflow: hidden; border: 1px solid #ddd;
+}
+.rs-drop-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.rs-drop-thumb button {
+  position: absolute; top: 2px; right: 2px; width: 18px; height: 18px;
+  border: 0; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff;
+  font-size: 12px; line-height: 1; cursor: pointer; padding: 0;
+}
+
+.rs-imgpanel-toggle {
+  display: flex; align-items: center; gap: 8px; margin-top: 12px;
+  font-size: 13px; color: #333; cursor: pointer;
+}
+
+.rs-imgpanel-cta {
+  margin-top: 12px; width: 100%; padding: 10px 0; border: 0; border-radius: 8px;
+  background: #c00; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.rs-imgpanel-cta:disabled { background: #ddd; cursor: default; }
+
+/* Secciones por foto (modo "productos distintos") */
+.rs-imgsec { margin-bottom: 28px; }
+.rs-imgsec-head {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 16px; font-weight: 600; margin: 0 0 12px;
+}
+.rs-imgsec-head img {
+  width: 44px; height: 44px; object-fit: cover; border-radius: 8px; border: 1px solid #ddd;
+}
