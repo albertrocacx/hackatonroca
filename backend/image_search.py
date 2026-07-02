@@ -13,6 +13,7 @@ Config (backend/.env): IMAGE_SEARCH_API_KEY (obligatoria), IMAGE_SEARCH_SCORING_
 """
 import base64
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 # Carga backend/.env con ruta absoluta (independiente del cwd). load_dotenv no pisa
@@ -31,6 +32,11 @@ SCORING_URI = os.getenv(
 )
 API_KEY = os.getenv("IMAGE_SEARCH_API_KEY", "")
 TIMEOUT_S = 60
+
+# El endpoint de Azure ML (una instancia) rechaza ráfagas: con 3+ peticiones
+# simultáneas devuelve timeout/errores. Concurrencia limitada + un reintento
+# por foto ante fallos de transporte.
+MAX_CONCURRENCY = 2
 
 
 class EndpointError(RuntimeError):
@@ -58,9 +64,20 @@ def query_image(image_bytes: bytes, top_k: int = 50) -> dict[str, float]:
 
 
 def query_images(images: list[bytes], top_k: int = 50) -> list[dict[str, float]]:
-    """Una llamada por foto, en paralelo (máx. 6 fotos: concurrencia trivial)."""
-    with ThreadPoolExecutor(max_workers=max(1, len(images))) as ex:
-        return list(ex.map(lambda b: query_image(b, top_k), images))
+    """Una llamada por foto, con concurrencia limitada y un reintento por foto
+    ante fallos de transporte (EndpointError no se reintenta: la foto es mala)."""
+    def one(b: bytes) -> dict[str, float]:
+        try:
+            return query_image(b, top_k)
+        except EndpointError:
+            raise
+        except Exception:  # noqa: BLE001 — timeout/red: un unico reintento
+            time.sleep(1.5)
+            return query_image(b, top_k)
+
+    workers = min(MAX_CONCURRENCY, max(1, len(images)))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return list(ex.map(one, images))
 
 
 def fuse_same(rankings: list[dict[str, float]]) -> dict[str, float]:

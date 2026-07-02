@@ -16,6 +16,30 @@ def test_fuse_same_una_foto_es_identidad():
     assert fused == {"A": 0.9, "B": 0.5}
 
 
+def test_query_images_reintenta_fallos_de_transporte(monkeypatch):
+    calls = {"n": 0}
+
+    def flaky(b, top_k=50):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("transporte")
+        return {"A": 0.9}
+
+    monkeypatch.setattr(image_search, "query_image", flaky)
+    monkeypatch.setattr(image_search.time, "sleep", lambda s: None)
+    assert image_search.query_images([b"x"]) == [{"A": 0.9}]
+    assert calls["n"] == 2
+
+
+def test_query_images_no_reintenta_endpoint_error(monkeypatch):
+    def bad(b, top_k=50):
+        raise image_search.EndpointError("foto ilegible")
+
+    monkeypatch.setattr(image_search, "query_image", bad)
+    with pytest.raises(image_search.EndpointError):
+        image_search.query_images([b"x"])
+
+
 # ---------------------------------------------------------------- /search/image
 import io
 
