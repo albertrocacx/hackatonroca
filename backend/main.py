@@ -619,21 +619,24 @@ def interpret_endpoint(q: str = ""):
     raw = (q or "").strip()
     if not raw:
         return {"query": q, "corrected_query": q, "corrected": False,
-                "search_text": "", "filters": {}, "tags": []}
+                "search_text": "", "filters": {}, "tags": [], "debug": {"engine": "none"}}
     key = _norm(raw)
     if key in _INTERPRET_CACHE:
         return _INTERPRET_CACHE[key]
 
     result = None
+    llm_debug = None
     if query_interpreter is not None and query_interpreter.available():
         try:
-            data = query_interpreter.interpret(raw, tuple(CATEGORIES), COLOR_WORDS)
-            if data:
-                result = _build_interpretation(raw, data)
+            parsed, llm_debug = query_interpreter.interpret(raw, tuple(CATEGORIES), COLOR_WORDS)
+            if parsed:
+                result = _build_interpretation(raw, parsed)
         except Exception as e:  # noqa: BLE001 — LLM caido/timeout: no romper la busqueda
             print(f"[/interpret] LLM FALLO ({e!r}) -> heuristico", flush=True)
+            llm_debug = {"engine": "llm", "error": repr(e)}
     if result is None:
         result = _interpret_heuristic(raw)
+    result["debug"] = llm_debug or {"engine": "heuristic"}
 
     _INTERPRET_CACHE[key] = result
     return result

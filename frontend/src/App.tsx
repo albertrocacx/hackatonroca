@@ -211,6 +211,19 @@ export default function App() {
     setOpen(false); setLoading(true); setError(null); setDetail(null);
     try {
       const r = await interpret(term);
+      // --- TRACE: qué se manda a la LLM y qué devuelve (visible en la consola del navegador) ---
+      console.groupCollapsed(`%c[interpret] "${term}"`, "color:#1c5c6e;font-weight:bold");
+      console.log("1) texto escrito (query enviada a /interpret):", term);
+      console.log("2) motor:", r.debug?.engine, r.debug?.model ?? "", r.debug?.endpoint ?? "");
+      if (r.debug?.system) console.log("3) PROMPT SISTEMA -> LLM:\n" + r.debug.system);
+      if (r.debug?.user) console.log("4) PROMPT USUARIO -> LLM (incluye tu frase):\n" + r.debug.user);
+      if (r.debug?.raw != null) console.log("5) RESPUESTA CRUDA de la LLM:\n" + r.debug.raw);
+      if (r.debug?.error) console.warn("   error LLM:", r.debug.error);
+      console.log("6) interpretado:", {
+        corrected: r.corrected, corrected_query: r.corrected_query,
+        search_text: r.search_text, filters: r.filters, tags: r.tags,
+      });
+      console.groupEnd();
       const s = selectedFromFilters(r.filters);
       setBaseText(r.search_text); setSubcat(null); setSel(s);
       setSubmitted(r.corrected_query || term);

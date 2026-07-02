@@ -169,6 +169,16 @@ export interface InterpretFilters {
   max_height?: number;
 }
 
+export interface InterpretDebug {
+  engine: string;
+  model?: string;
+  endpoint?: string;
+  system?: string;   // prompt de sistema enviado a la LLM
+  user?: string;     // prompt de usuario enviado a la LLM (incluye la frase)
+  raw?: string | null; // respuesta cruda de la LLM
+  error?: string;
+}
+
 export interface InterpretResponse {
   query: string;
   corrected_query: string;
@@ -176,6 +186,7 @@ export interface InterpretResponse {
   search_text: string;
   filters: InterpretFilters;
   tags: AppliedTag[];
+  debug?: InterpretDebug;
 }
 
 export async function interpret(q: string): Promise<InterpretResponse> {

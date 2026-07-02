@@ -113,14 +113,17 @@ def _extract_json(text: str):
     return None
 
 
-def interpret(q: str, categories: tuple, colors: tuple) -> dict | None:
-    """Llama al LLM y devuelve el dict parseado (crudo, sin resolver contra catalogo),
-    o None si falla. `categories` y `colors` acotan los valores validos."""
+def interpret(q: str, categories: tuple, colors: tuple):
+    """Llama al LLM. Devuelve (parsed|None, debug), donde `debug` incluye los textos
+    EXACTOS enviados a la LLM (system/user), la respuesta cruda y metadatos del modelo.
+    `categories` y `colors` acotan los valores validos."""
     user = (
         f"Categorias disponibles: {', '.join(categories)}\n"
         f"Colores disponibles: {', '.join(colors)}\n\n"
         f"Frase del usuario: {q}"
     )
+    debug = {"engine": "llm", "model": DEPLOYMENT, "endpoint": FOUNDRY_ENDPOINT,
+             "system": SYSTEM, "user": user, "raw": None}
     resp = _client().responses.create(
         model=DEPLOYMENT,
         max_output_tokens=500,
@@ -129,4 +132,6 @@ def interpret(q: str, categories: tuple, colors: tuple) -> dict | None:
             {"role": "user", "content": user},
         ],
     )
-    return _extract_json(resp.output_text or "")
+    raw = resp.output_text or ""
+    debug["raw"] = raw
+    return _extract_json(raw), debug
