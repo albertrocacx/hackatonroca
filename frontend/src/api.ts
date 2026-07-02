@@ -303,7 +303,21 @@ export async function designBathroom(req: DesignRequest): Promise<DesignResponse
 
 // Producto seleccionado (último abierto): el agente lo usa para "el manual de este producto"
 export interface SelectedProduct { sku: string; model?: string | null; title?: string | null; }
-export interface ChatView { query?: string; visible?: string[]; selected?: SelectedProduct; }
+// Última búsqueda por imagen: el agente parte de sus coincidencias visuales ("esto de la foto").
+// En modo "same" hay un único grupo (fusión de todas las fotos); en "distinct", uno por foto.
+export interface ImageMatch { sku: string; title: string | null; }
+export interface ImageSearchContext {
+  photos: number;
+  mode: "same" | "distinct";
+  refine?: string;
+  groups: { photo: number; matches: ImageMatch[] }[];
+}
+export interface ChatView {
+  query?: string;
+  visible?: string[];
+  selected?: SelectedProduct;
+  image_search?: ImageSearchContext;
+}
 export interface ChatRequest { text: string; session_id?: string | null; view?: ChatView; }
 
 export interface ChatFilters {
