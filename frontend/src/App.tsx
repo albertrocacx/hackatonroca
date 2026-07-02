@@ -562,6 +562,9 @@ export default function App() {
             onDrop={(e) => {
               if (!imageReady) return;
               e.preventDefault(); setDragOver(false);
+              // el drop sobre la dropzone del panel ya lo procesa ImageDropPanel;
+              // sin este guard el evento burbujea hasta aquí y la foto se añade dos veces
+              if ((e.target as HTMLElement).closest(".rs-dropzone")) return;
               if (e.dataTransfer.files.length) addPhotos(e.dataTransfer.files);
             }}
           >
