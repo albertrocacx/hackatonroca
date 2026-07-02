@@ -14,6 +14,7 @@ import {
   type ProductSummary, type ProductDetail, type Suggestion, type Filter, type AppliedTag,
   type Selected, type Facets as FacetsData, type ModelCard, type ShopItem,
   type ImageSearchGroup,
+  type ImageSearchContext,
   type SortKey,
   type SelectedProduct,
 } from "./api";
@@ -144,6 +145,8 @@ export default function App() {
   const [imgPanelOpen, setImgPanelOpen] = useState(false);
   const [sameProduct, setSameProduct] = useState(true);
   const [imageGroups, setImageGroups] = useState<ImageSearchGroup[] | null>(null);
+  // contexto de la última búsqueda por imagen: la Búsqueda IA parte de estas coincidencias
+  const [imageContext, setImageContext] = useState<ImageSearchContext | null>(null);
   const [imageReady, setImageReady] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
@@ -272,6 +275,7 @@ export default function App() {
                            auto = false, sortKey: SortKey = sort) {
     setLoading(true); setError(null); setDetail(null); setOpen(false);
     setImageGroups(null);                    // una búsqueda de texto sale del modo imagen
+    setImageContext(null);
     try {
       const r = await search(text, s, sc, auto, sortKey);
       setResults(r.results); setTotal(r.total); setFacets(r.facets);
@@ -325,7 +329,11 @@ export default function App() {
         add.push({ id: `${f.name}-${f.size}-${Math.random()}`, blob, url: URL.createObjectURL(blob) });
       } catch { /* foto ilegible: se ignora */ }
     }
-    if (add.length) { setPhotos((p) => [...p, ...add]); setImgPanelOpen(true); }
+    if (add.length) {
+      setPhotos((p) => [...p, ...add]);
+      setImgPanelOpen(true);
+      setImageContext(null);   // fotos nuevas: el contexto de la última búsqueda ya no las representa
+    }
   }
 
   function removePhoto(id: string) {
@@ -336,13 +344,20 @@ export default function App() {
     });
     // las secciones por foto dejan de corresponder a las fotos actuales -> salir del modo distinct
     if (imageGroups) {
-      setImageGroups(null);
+      setImageGroups(null); setImageContext(null);
       setResults([]); setTotal(null); setSubmitted("");
     }
   }
 
   // Búsqueda por imagen: las fotos mandan; el texto (si hay) filtra los matches visuales.
-  async function runImageSearch(text: string) {
+  // Los mejores matches (SKU + título) se guardan en imageContext para que la Búsqueda IA
+  // parta de ellos ("esto que sale en mi foto").
+  const topMatches = (cards: ModelCard[], n = 6) =>
+    cards.slice(0, n)
+      .map((c) => ({ sku: c.variants[c.default]?.sku ?? c.variants[0]?.sku, title: c.title }))
+      .filter((m): m is { sku: string; title: string | null } => !!m.sku);
+
+  async function runImageSearch(text: string): Promise<ImageSearchContext | null> {
     setLoading(true); setError(null); setDetail(null); setOpen(false); setImgPanelOpen(false);
     try {
       const mode = photos.length > 1 && !sameProduct ? "distinct" : "same";
@@ -350,17 +365,26 @@ export default function App() {
       const nf = `${photos.length} foto${photos.length > 1 ? "s" : ""}`;
       setSubmitted(text.trim() ? `${text.trim()} · ${nf}` : `Búsqueda por imagen (${nf})`);
       setFacets(null);                       // sin sidebar en modo imagen
+      const ctx: ImageSearchContext = {
+        photos: photos.length, mode, refine: text.trim() || undefined, groups: [],
+      };
       if ("groups" in r) {
         setImageGroups(r.groups);
         setResults([]);
         setTotal(r.groups.reduce((n, g) => n + g.total, 0));
+        ctx.groups = r.groups.map((g) => ({ photo: g.photo, matches: topMatches(g.results) }));
       } else {
         setImageGroups(null);
         setResults(r.results);
         setTotal(r.total);
+        ctx.groups = [{ photo: 0, matches: topMatches(r.results) }];
       }
+      const ok = ctx.groups.some((g) => g.matches.length) ? ctx : null;
+      setImageContext(ok);
+      return ok;             // para encadenar (Búsqueda IA directa) sin esperar al re-render
     } catch (err) {
       setError(String(err));
+      return null;
     } finally {
       setLoading(false);
     }
@@ -496,7 +520,9 @@ export default function App() {
   }, []);
 
   // Envía un turno al agente y consume el stream NDJSON, actualizando chat + parrilla.
-  async function sendChat(text: string) {
+  // imageCtx: contexto de imagen recién calculado (Búsqueda IA directa), aún no visible
+  // en el estado por el re-render pendiente; si no llega, se usa el del estado.
+  async function sendChat(text: string, imageCtx?: ImageSearchContext | null) {
     if (!text.trim() || chatBusy) return;
     setMessages((m) => [...m, { role: "user", text }]);
     setChatBusy(true);
@@ -509,6 +535,7 @@ export default function App() {
           .map((r) => r.variants[r.default]?.sku ?? r.variants[0]?.sku)
           .filter(Boolean),
         selected: lastProduct ?? undefined,
+        image_search: (imageCtx !== undefined ? imageCtx : imageContext) ?? undefined,
       };
       for await (const ev of streamChat({ text, session_id: sessionId.current, view })) {
         if (ev.type === "text") {
@@ -528,6 +555,7 @@ export default function App() {
         } else if (ev.type === "grid") {
           asstOpen = false;                       // tras la parrilla, el próximo texto abre burbuja nueva
           setImageGroups(null);   // el chat pinta la parrilla normal: salir del modo por-foto
+          setImageContext(null);  // ya inyectado en la sesión; la parrilla nueva manda
           const q2 = ev.query ?? submitted;
           setResults(ev.data.results);
           setTotal(ev.data.total);
@@ -574,16 +602,28 @@ export default function App() {
   }
 
   // Botón "Búsqueda IA": abre el panel y siembra la conversación con la consulta actual.
-  function openAI() {
+  // Con fotos subidas hace ÉL MISMO la búsqueda visual (si aún no se hizo) y arranca el
+  // chat desde lo identificado; tras un Buscar previo reutiliza ese contexto sin repetirla.
+  async function openAI() {
     setAiOpen(true);
-    const seed = q.trim();
+    let seed = q.trim();
     if (!chatReady) {
       if (messages.length === 0) {
         setMessages([{ role: "error", text: CHAT_DEMO_MSG }]);
       }
       return;
     }
-    if (seed) sendChat(seed);
+    let ctx: ImageSearchContext | null | undefined;   // undefined = usar el del estado
+    if (photos.length > 0 && !imageContext && !chatBusy) {
+      setChatStatus("Buscando por imagen");
+      ctx = await runImageSearch(q);
+      setChatStatus(null);
+    }
+    const effective = ctx !== undefined ? ctx : imageContext;
+    if (!seed && effective) {
+      seed = "He buscado por foto. Preséntame brevemente lo que has identificado y ayúdame a elegir o afinar.";
+    }
+    if (seed) sendChat(seed, ctx);
     else if (messages.length === 0) setMessages([{ role: "assistant", text: CHAT_INTRO }]);
   }
 

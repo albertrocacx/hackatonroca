@@ -29,6 +29,8 @@ export function ImageDropPanel({
   onSearch: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const MAX = 6;
+  const room = MAX - photos.length;
 
   function onDrop(e: DragEvent) {
     e.preventDefault();
@@ -36,29 +38,31 @@ export function ImageDropPanel({
   }
 
   return (
-    <div className="rs-suggest rs-imgpanel">
-      <div
-        className="rs-dropzone"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={onDrop}
-        onClick={() => inputRef.current?.click()}
-        role="button"
-        tabIndex={0}
-      >
-        <CameraIcon />
-        <p>Arrastra tus fotos aquí o <u>haz click para elegir</u></p>
-        <p className="rs-dropzone-hint">Hasta 6 fotos · varios ángulos mejoran el resultado</p>
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          hidden
-          onChange={(e) => { if (e.target.files) onAdd(e.target.files); e.target.value = ""; }}
-        />
-      </div>
+    // el drop funciona sobre TODO el panel, no solo sobre la dropzone
+    <div className="rs-suggest rs-imgpanel" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => { if (e.target.files) onAdd(e.target.files); e.target.value = ""; }}
+      />
 
-      {photos.length > 0 && (
+      {photos.length === 0 ? (
+        /* vacío: dropzone grande e invitadora */
+        <div
+          className="rs-dropzone"
+          onClick={() => inputRef.current?.click()}
+          role="button"
+          tabIndex={0}
+        >
+          <CameraIcon />
+          <p>Arrastra tus fotos aquí o <u>haz click para elegir</u></p>
+          <p className="rs-dropzone-hint">Hasta {MAX} fotos · varios ángulos mejoran el resultado</p>
+        </div>
+      ) : (
+        /* con fotos: las protagonistas son ellas; se añade más con la tesela "+" */
         <div className="rs-drop-thumbs">
           {photos.map((p) => (
             <span key={p.id} className="rs-drop-thumb">
@@ -66,28 +70,45 @@ export function ImageDropPanel({
               <button type="button" aria-label="Quitar foto" onClick={() => onRemove(p.id)}>×</button>
             </span>
           ))}
+          {room > 0 && (
+            <button
+              type="button"
+              className="rs-add-tile"
+              onClick={() => inputRef.current?.click()}
+              aria-label="Añadir más fotos"
+              title={`Añadir fotos (hasta ${room} más)`}
+            >
+              <CameraIcon small />
+              <span>Añadir</span>
+            </button>
+          )}
         </div>
       )}
 
-      {photos.length >= 2 && (
-        <label className="rs-imgpanel-toggle">
-          <input
-            type="checkbox"
-            checked={sameProduct}
-            onChange={(e) => onToggleSame(e.target.checked)}
-          />
-          Las fotos son del mismo producto
-        </label>
-      )}
-
-      <button
-        type="button"
-        className="rs-imgpanel-cta"
-        disabled={photos.length === 0 || busy}
-        onClick={onSearch}
-      >
-        {busy ? "Buscando…" : "Buscar por imagen"}
-      </button>
+      <div className="rs-imgpanel-foot">
+        {photos.length >= 2 ? (
+          <label className="rs-imgpanel-toggle">
+            <input
+              type="checkbox"
+              checked={sameProduct}
+              onChange={(e) => onToggleSame(e.target.checked)}
+            />
+            Las fotos son del mismo producto
+          </label>
+        ) : (
+          <span className="rs-imgpanel-hint">
+            {photos.length === 1 ? "1 foto lista" : "Busca productos Roca con tus fotos"}
+          </span>
+        )}
+        <button
+          type="button"
+          className="rs-imgpanel-cta"
+          disabled={photos.length === 0 || busy}
+          onClick={onSearch}
+        >
+          {busy ? "Buscando…" : "Buscar por imagen"}
+        </button>
+      </div>
     </div>
   );
 }

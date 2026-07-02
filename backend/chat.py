@@ -421,6 +421,15 @@ MILÍMETROS; convierte cm/m a mm, 100 cm = 1000 mm). Ejemplos: "lavabos blancos 
 de 200 €" -> `query="lavabos blancos", max_price=200`; "inodoros de alto máx 100 cm" -> \
 `query="inodoros", max_height=1000`.
 
+BÚSQUEDA POR IMAGEN: si el [contexto] trae una "búsqueda por imagen previa", el usuario \
+subió foto(s) y esos SKUs son los productos del catálogo visualmente más parecidos (el \
+primero es el candidato más probable). PARTE DE ELLOS: cuando diga "esto", "el de la \
+foto" o pida recambios/manual/compra sin nombrar producto, asume que habla del primer \
+match (o del de la foto que diga, en modo por-foto). Preséntalos con naturalidad ("En tus \
+fotos he identificado..."), usa sus SKUs directamente con show_product/search_manual, y \
+si quiere variantes o alternativas (otro acabado, otro precio) busca con search_catalog \
+partiendo del título del match. No repitas la búsqueda visual: ya está hecha.
+
 DOCUMENTACIÓN DE UN PRODUCTO (search_manual):
 - Úsala cuando el usuario pida el manual/guía/ficha de un producto o pregunte cómo usarlo, \
 instalarlo, montarlo o mantenerlo.
@@ -561,6 +570,23 @@ def _build_prompt(text: str, view: dict | None) -> str:
             s += f", modelo {sel['model']}"
         if sel.get("title"):
             s += f" — «{sel['title']}»"
+        bits.append(s)
+    img = view.get("image_search") or {}
+    groups = [g for g in (img.get("groups") or []) if g.get("matches")]
+    if groups:
+        # mode 'same' = todas las fotos son el mismo producto (un solo ranking fusionado);
+        # 'distinct' = cada foto es un producto distinto (un ranking por foto).
+        distinct = img.get("mode") == "distinct"
+        parts = []
+        for g in groups:
+            ms = "; ".join(f"{m['sku']} «{m.get('title') or '?'}»"
+                           for m in g["matches"][:6] if m.get("sku"))
+            parts.append(f"foto {g.get('photo')}: {ms}" if distinct else ms)
+        s = (f"búsqueda por imagen previa ({img.get('photos', 1)} foto(s), "
+             f"{'un producto distinto por foto' if distinct else 'mismo producto'})")
+        if img.get("refine"):
+            s += f", refinada con el texto {img['refine']!r}"
+        s += " — productos visualmente más parecidos, mejor match primero: " + " || ".join(parts)
         bits.append(s)
     return f"[contexto] {' | '.join(bits)}\n\n{text}" if bits else text
 
