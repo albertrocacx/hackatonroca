@@ -115,7 +115,9 @@ def _brief_from_card(c: dict) -> dict:
     variants = c.get("variants") or []
     v = variants[c.get("default", 0)] if variants else {}
     return {"sku": v.get("sku"), "title": c.get("title"), "collection": c.get("collection"),
-            "finish": v.get("finish"), "price_rrp": v.get("price_rrp")}
+            "finish": v.get("finish"), "price_rrp": v.get("price_rrp"),
+            # "OnlineFrom" => comprable online (carrito); "PVPR" => solo distribuidor
+            "price_type": v.get("price_type")}
 
 
 # --- Tool de documentación: preguntas sobre el manual/guía de UN producto (SKU) concreto ---
@@ -192,6 +194,46 @@ def search_manual_impl(sku: str, doctype: str, question: str, top: int = MANUAL_
     return payload
 
 
+# --- Tools de UI: no calculan nada, abren vistas en el frontend (compra guiada) ---
+# stream_turn emite un evento ({type: suppliers|product}) que el cliente traduce en
+# openLocalSuppliers / openProduct; el tool_result solo confirma la acción al modelo.
+_SUPPLIERS_TOOL = {
+    "name": "find_local_suppliers",
+    "description": ("Abre para el usuario el buscador de distribuidores Roca cercanos "
+                    "(geolocalización + mapa + datos REALES de puntos de venta ordenados por "
+                    "distancia). Úsala siempre que pregunte DÓNDE COMPRAR un producto, por "
+                    "tiendas, distribuidores o puntos de venta cercanos. Nunca inventes "
+                    "tiendas, direcciones ni teléfonos: los muestra esta herramienta."),
+    "input_schema": {
+        "type": "object",
+        "properties": {"product": {
+            "type": "string",
+            "description": "Nombre o referencia del producto sobre el que pregunta el "
+                           "usuario, si se conoce (se mostrará como encabezado del "
+                           "buscador). Opcional."}},
+        "required": [],
+    },
+}
+
+_SHOW_PRODUCT_TOOL = {
+    "name": "show_product",
+    "description": ("Abre para el usuario la ficha de un producto concreto: la vista con sus "
+                    "datos, variantes y el BOTÓN DE COMPRA («Comprar online» si es online -> "
+                    "añade al carrito; «Dónde comprar» si es solo distribuidor). Úsala cuando "
+                    "el usuario quiera comprar, añadir al carrito o ver el detalle de UN "
+                    "producto identificado por su SKU (tómalo de los resultados de "
+                    "search_catalog o del [contexto])."),
+    "input_schema": {
+        "type": "object",
+        "properties": {"sku": {
+            "type": "string",
+            "description": "SKU exacto del producto a abrir (de un resultado previo o del "
+                           "contexto de SKUs mostrados)."}},
+        "required": ["sku"],
+    },
+}
+
+
 def configure(search_fn):
     """main.py inyecta su `search`. Construimos aquí (con la firma ya conocida) las
     definiciones de tools para la Messages API."""
@@ -215,7 +257,7 @@ def configure(search_fn):
                         "del usuario."),
         "input_schema": {"type": "object", "properties": props, "required": ["query"]},
     }
-    _TOOLS = [catalog_tool, _MANUAL_TOOL]
+    _TOOLS = [catalog_tool, _MANUAL_TOOL, _SUPPLIERS_TOOL, _SHOW_PRODUCT_TOOL]
 
 
 def _search_kwargs(a: dict, limit: int) -> dict:
@@ -241,12 +283,29 @@ SYSTEM = """Eres el asistente del catálogo Roca para el mercado español: un ex
 showroom que ayuda a encontrar productos de baño y cocina (lavabos, inodoros, bidés, \
 platos de ducha, bañeras, grifería, mobiliario, accesorios).
 
-Herramientas (úsalas, nunca inventes productos, precios ni instrucciones):
+Herramientas (úsalas, nunca inventes productos, precios, tiendas ni instrucciones):
 - search_catalog: buscar productos. Los resultados se enseñan TAMBIÉN al usuario en una \
 parrilla automáticamente, así que no listes todos: resume y señala la parrilla ("Aquí \
 tienes algunas opciones a la izquierda").
 - search_manual: responder preguntas sobre la documentación de UN producto concreto (por \
 SKU): manual de usuario, guía de instalación o ficha técnica.
+- find_local_suppliers: abre el buscador de distribuidores Roca cercanos (mapa + datos \
+reales por distancia). Úsala para la compra OFFLINE / física: cuando pregunte por tiendas, \
+distribuidores o puntos de venta CERCANOS ("¿dónde compro esto cerca de mí?"), o cuando el \
+producto sea solo de distribuidor (price_type "PVPR"). Pasa el nombre del producto en \
+`product` si lo conoces. NUNCA inventes direcciones ni teléfonos: para eso está esta tool. \
+Tras llamarla, invita a permitir la ubicación en el buscador que se ha abierto.
+- show_product: abre la FICHA de un producto por su `sku`, con su botón de compra. Úsala \
+para la compra ONLINE: cuando el usuario quiera comprar, añadir al carrito o ver el detalle \
+de un producto concreto y sea comprable online (price_type "OnlineFrom"). El botón "Comprar \
+online" de esa ficha añade el producto al carrito. Coge el SKU de search_catalog o del \
+[contexto]; si no tienes un SKU, busca primero.
+
+REGLA DE COMPRA: usa el price_type del producto (viene en los resultados de search_catalog): \
+"OnlineFrom" -> comprable online, usa show_product; "PVPR" -> solo distribuidor, usa \
+find_local_suppliers. Si el usuario pide explícitamente tienda física, usa siempre \
+find_local_suppliers aunque sea online. NUNCA respondas "no tengo datos de dónde comprar": \
+llama a la herramienta que corresponda.
 
 REGLA DE BÚSQUEDA (impórtate mucho):
 - Puedes hacer VARIAS llamadas a search_catalog en el mismo turno para refinar: probar \
@@ -347,6 +406,19 @@ def _manual_label(inp: dict) -> str:
     return f"Consultando {doc} del producto {sku}" if sku else f"Consultando {doc}"
 
 
+def _tool_label(name: str, inp: dict) -> str:
+    if name == "search_manual":
+        return _manual_label(inp)
+    if name == "find_local_suppliers":
+        prod = inp.get("product")
+        return f"Buscando distribuidores cercanos para {prod}" if prod \
+            else "Buscando distribuidores cercanos"
+    if name == "show_product":
+        sku = inp.get("sku")
+        return f"Abriendo la ficha del producto {sku}" if sku else "Abriendo la ficha del producto"
+    return _search_label(inp)
+
+
 def _build_prompt(text: str, view: dict | None) -> str:
     if not view:
         return text
@@ -412,8 +484,8 @@ async def stream_turn(text: str, session_id: str | None = None, view: dict | Non
                 if block.type != "tool_use":
                     continue
                 inp = block.input if isinstance(block.input, dict) else {}
-                label = _manual_label(inp) if block.name == "search_manual" else _search_label(inp)
-                yield {"type": "tool", "name": block.name, "label": label}
+                yield {"type": "tool", "name": block.name,
+                       "label": _tool_label(block.name, inp)}
 
                 if block.name == "search_manual":
                     try:
@@ -423,6 +495,38 @@ async def stream_turn(text: str, session_id: str | None = None, view: dict | Non
                         payload = {"error": str(e)}
                     tool_results.append({"type": "tool_result", "tool_use_id": block.id,
                                          "content": json.dumps(payload, ensure_ascii=False)})
+                    continue
+
+                if block.name == "find_local_suppliers":
+                    # abre en el frontend el buscador de distribuidores (LocalSuppliers):
+                    # geolocalización -> /suppliers/nearby -> lista + mapa. La geolocalización
+                    # vive en el navegador, así que el trabajo real lo hace el cliente.
+                    prod = (inp.get("product") or "").strip()
+                    yield {"type": "suppliers", "product": prod or None}
+                    note = f" para «{prod}»" if prod else ""
+                    tool_results.append({"type": "tool_result", "tool_use_id": block.id,
+                                         "content": f"He abierto el buscador de distribuidores "
+                                                    f"cercanos{note}. Muestra puntos de venta Roca "
+                                                    "reales ordenados por distancia, con mapa; el "
+                                                    "usuario debe permitir la geolocalización (o usar "
+                                                    "la ubicación de referencia que ofrece el propio "
+                                                    "buscador)."})
+                    continue
+
+                if block.name == "show_product":
+                    # abre en el frontend la ficha del producto (openProduct): incluye el
+                    # botón "Comprar online" -> añade al carrito (compra online).
+                    sku = (inp.get("sku") or "").strip()
+                    if sku:
+                        yield {"type": "product", "sku": sku}
+                        content = (f"He abierto la ficha del producto {sku} para el usuario, con "
+                                   "su botón de compra (online: «Comprar online» añade al carrito; "
+                                   "si es de distribuidor: «Dónde comprar»).")
+                    else:
+                        content = ("No tengo el SKU. Busca primero con search_catalog y usa el "
+                                   "SKU del resultado.")
+                    tool_results.append({"type": "tool_result", "tool_use_id": block.id,
+                                         "content": content})
                     continue
 
                 # search_catalog

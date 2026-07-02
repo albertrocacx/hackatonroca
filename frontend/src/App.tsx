@@ -29,7 +29,11 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 
 const CHAT_INTRO =
   "Hola. Dime qué buscas —un lavabo, un plato de ducha, una grifería— y te muestro opciones en la parrilla. Puedo filtrar por precio o acabado y afinar la búsqueda.";
-const TOOL_LABEL: Record<string, string> = { search_catalog: "Buscando en el catálogo" };
+const TOOL_LABEL: Record<string, string> = {
+  search_catalog: "Buscando en el catálogo",
+  find_local_suppliers: "Buscando distribuidores cercanos",
+  show_product: "Abriendo la ficha del producto",
+};
 
 const TYPE_LABEL: Record<string, string> = {
   category: "Categoría",
@@ -504,6 +508,15 @@ export default function App() {
             height: { min: f.min_height ?? null, max: f.max_height ?? null },
           });
           setMessages((m) => [...m, { role: "note", text: "Resultados actualizados ←" }]);
+        } else if (ev.type === "suppliers") {
+          // compra offline: abre el buscador de distribuidores cercanos, como el
+          // botón "Dónde comprar" del grid (geolocalización → /suppliers/nearby → lista + mapa).
+          openLocalSuppliers({ sku: "", title: ev.product ?? null, image: null, price_rrp: null });
+          setMessages((m) => [...m, { role: "note", text: "Buscador de distribuidores abierto ↗" }]);
+        } else if (ev.type === "product") {
+          // compra online: abre la ficha del producto (con su botón "Comprar online" → carrito).
+          openProduct(ev.sku);
+          setMessages((m) => [...m, { role: "note", text: "Ficha del producto abierta ↗" }]);
         } else if (ev.type === "done") {
           if (ev.session_id) sessionId.current = ev.session_id;
         } else if (ev.type === "error") {

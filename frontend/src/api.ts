@@ -323,6 +323,8 @@ export type ChatEvent =
   | { type: "tool"; name: string; label?: string }
   | { type: "tool_error"; name: string; error: string }
   | { type: "grid"; query: string | null; filters?: ChatFilters; data: SearchResponse }
+  | { type: "suppliers"; product: string | null }
+  | { type: "product"; sku: string }
   | { type: "done"; session_id?: string }
   | { type: "error"; message: string };
 
