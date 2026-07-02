@@ -511,6 +511,21 @@ button { font-family: inherit; }
 .rs-cta-icon { width: 18px; height: 18px; flex-shrink: 0; }
 .rs-cta-arrow { font-size: 16px; line-height: 1; }
 
+/* "Preguntar a la IA sobre este artículo" (ficha): variante outline con el acento IA */
+.rs-cta--ask {
+  margin-top: 10px;
+  background: #fff;
+  border: 1px solid #2a7a9c;
+  color: #2a7a9c;
+  transition: background .15s, color .15s, box-shadow .15s;
+}
+.rs-cta--ask:hover {
+  opacity: 1;
+  background: #2a7a9c;
+  color: #fff;
+  box-shadow: 0 2px 12px rgba(42,122,156,.35);
+}
+
 /* ---------- botón Búsqueda IA ---------- */
 .rs-ai-btn {
   flex: 0 0 auto;
