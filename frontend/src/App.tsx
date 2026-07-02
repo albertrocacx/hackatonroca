@@ -118,7 +118,6 @@ export default function App() {
   const [imgPanelOpen, setImgPanelOpen] = useState(false);
   const [sameProduct, setSameProduct] = useState(true);
   const [imageGroups, setImageGroups] = useState<ImageSearchGroup[] | null>(null);
-  void imageGroups;                        // consumido por el grid en modo distinct (Task 6)
   const [imageReady, setImageReady] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
@@ -569,17 +568,40 @@ export default function App() {
             <p className="rs-state">No se han encontrado productos para «{submitted}».</p>
           )}
 
-          <div className="rs-grid">
-            {results.map((c) => (
-              <ProductCard
-                key={c.model}
-                card={c}
-                onOpen={openProduct}
-                onBuyOnline={addToCart}
-                onFindLocal={openLocalSuppliers}
-              />
-            ))}
-          </div>
+          {imageGroups ? (
+            imageGroups.map((g, i) => (
+              <section key={g.photo} className="rs-imgsec">
+                <h2 className="rs-imgsec-head">
+                  {photos[i] && <img src={photos[i].url} alt={`Foto ${g.photo}`} />}
+                  <span>Foto {g.photo} · {g.total} resultado{g.total === 1 ? "" : "s"}</span>
+                </h2>
+                {g.total === 0 && <p className="rs-state">Sin resultados para esta foto.</p>}
+                <div className="rs-grid">
+                  {g.results.map((c) => (
+                    <ProductCard
+                      key={`${g.photo}-${c.model}`}
+                      card={c}
+                      onOpen={openProduct}
+                      onBuyOnline={addToCart}
+                      onFindLocal={openLocalSuppliers}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))
+          ) : (
+            <div className="rs-grid">
+              {results.map((c) => (
+                <ProductCard
+                  key={c.model}
+                  card={c}
+                  onOpen={openProduct}
+                  onBuyOnline={addToCart}
+                  onFindLocal={openLocalSuppliers}
+                />
+              ))}
+            </div>
+          )}
         </main>
       </div>
       </div>
