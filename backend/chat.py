@@ -226,7 +226,9 @@ El usuario NO ve las búsquedas intermedias: su parrilla mostrará SOLO tu ÚLTI
 con resultados. Por eso, haz que tu ÚLTIMA búsqueda sea la que mejor responde a lo que \
 pidió (si refinando empeoras, repite al final la mejor búsqueda que encontraste).
 - Empieza por la consulta MÁS SIMPLE y directa posible: normalmente las palabras del \
-usuario tal cual. Si escribe "lavabos", busca `query="lavabos"`. Refina solo si hace falta.
+usuario tal cual, pero CORRIGIENDO erratas evidentes (p. ej. "lababo" -> "lavabo", \
+"inodoto" -> "inodoro", "grifo de cosina" -> "grifo cocina"). Si escribe "lavabos", busca \
+`query="lavabos"`. Refina solo si hace falta.
 - Colores, materiales, formas y descripciones (p. ej. "blanco", "mate", "redondo") van \
 en el TEXTO de `query`, NO como filtro (la búsqueda de texto los encuentra de forma \
 fiable; los filtros exactos como `finish` distinguen mayúsculas y suelen fallar). \

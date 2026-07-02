@@ -141,6 +141,13 @@ app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
 
+# resumen de arranque: qué datos y qué motores quedaron disponibles (visible en logs de Railway)
+print(f"[startup] productos={len(PRODUCTS)} modelos={len(BY_MODEL)} relaciones={len(RELATIONS)} "
+      f"imagenes={len(IMAGES)} suppliers={len(SUPPLIERS)}", flush=True)
+print(f"[startup] azure_search={'ok' if azure_search else 'NO'} "
+      f"chat={'ok' if chat else 'NO'} chat_key={'si' if (chat and chat.API_KEY) else 'no'} "
+      f"semantic={'on' if ENABLE_SEMANTIC else 'off'} AZURE_K={AZURE_K}", flush=True)
+
 @app.get("/health")
 def health():
     return {"status": "ok", "products": len(PRODUCTS),
@@ -461,6 +468,10 @@ def search(q: str = "", limit: int = 30, include_spare: bool = False,
             "height": _bounds(loo("height"), _hei_mm),
         },
     }
+
+    if q_clean:
+        print(f"[/search] q={q_clean!r} -> modelos={len(order)} (scope={len(scope)}) limit={limit}",
+              flush=True)
 
     return {"query": q, "total": len(order),
             "results": [build_card(m) for m in order[:limit]],
