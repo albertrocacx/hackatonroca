@@ -33,6 +33,11 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 
 const CHAT_INTRO =
   "Hola. Dime qué buscas —un lavabo, un plato de ducha, una grifería— y te muestro opciones en la parrilla. Puedo filtrar por precio o acabado y afinar la búsqueda.";
+const CHAT_DEMO_MSG =
+  "Chat en modo demo. Para activarlo, añade CLAUDE_API_KEY a backend/.env (o defínela como variable de entorno) y reinicia el servidor. La búsqueda ya funciona.";
+// Pregunta que siembra el chat desde la ficha de un artículo: el asistente resuelve
+// "este artículo" con el producto seleccionado del [contexto] (sku/modelo/título).
+const ASK_ARTICLE_MSG = "¿Qué me puedes contar de este artículo?";
 const TOOL_LABEL: Record<string, string> = {
   search_catalog: "Buscando en el catálogo",
   find_local_suppliers: "Buscando distribuidores cercanos",
@@ -604,8 +609,7 @@ export default function App() {
     let seed = q.trim();
     if (!chatReady) {
       if (messages.length === 0) {
-        setMessages([{ role: "error",
-          text: "Chat en modo demo. Para activarlo, añade CLAUDE_API_KEY a backend/.env (o defínela como variable de entorno) y reinicia el servidor. La búsqueda ya funciona." }]);
+        setMessages([{ role: "error", text: CHAT_DEMO_MSG }]);
       }
       return;
     }
@@ -621,6 +625,21 @@ export default function App() {
     }
     if (seed) sendChat(seed, ctx);
     else if (messages.length === 0) setMessages([{ role: "assistant", text: CHAT_INTRO }]);
+  }
+
+  // Botón "Preguntar a la IA sobre este artículo" de la ficha: abre el chat y siembra la
+  // pregunta. El artículo viaja como "producto seleccionado" del [contexto] (lastProduct,
+  // fijado al abrir la ficha), así que el asistente ya conoce su SKU/modelo y puede
+  // responder o entregar el manual sin pedirlos.
+  function askAIAboutArticle() {
+    setAiOpen(true);
+    if (!chatReady) {
+      if (messages.length === 0) {
+        setMessages([{ role: "error", text: CHAT_DEMO_MSG }]);
+      }
+      return;
+    }
+    sendChat(ASK_ARTICLE_MSG);
   }
 
   function newChat() {
@@ -1033,6 +1052,10 @@ export default function App() {
                   onBuyOnline={addToCart}
                   onFindLocal={openLocalSuppliers}
                 />
+                <button type="button" className="rs-cta rs-cta--ask" onClick={askAIAboutArticle}>
+                  <SparkIcon />
+                  Preguntar a la IA sobre este artículo
+                </button>
               </div>
             </div>
 
