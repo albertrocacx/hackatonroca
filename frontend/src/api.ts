@@ -1,4 +1,10 @@
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
+// Servido a través de un túnel (demo móvil): mismo origen y el proxy de Vite
+// reenvía al backend; en local, directo a :8000. VITE_API_URL manda siempre.
+const API =
+  import.meta.env.VITE_API_URL ||
+  (typeof location !== "undefined" && location.hostname.endsWith(".devtunnels.ms")
+    ? ""
+    : "http://localhost:8000");
 
 export type PriceType = "OnlineFrom" | "PVPR";
 
@@ -370,6 +376,40 @@ export async function* streamChat(req: ChatRequest): AsyncGenerator<ChatEvent> {
   }
   const tail = buf.trim();
   if (tail) yield JSON.parse(tail) as ChatEvent;
+}
+
+// ---- Modelos 3D / Realidad Aumentada ("Visualizar en tu habitación") ----
+// El backend responde por `model` de catálogo: rutas del proxy de blobs (.fbx
+// principal si el navegador puede leerlo, .3ds como fallback) y medidas reales
+// en mm para que el visor ponga el producto a escala real.
+export interface Dims3d { length: number | null; width: number | null; height: number | null; }
+export interface Model3dInfo {
+  available: boolean;
+  glb: string | null;      // glTF binario: el mejor formato web (PBR, metros); prioridad
+  fbx: string | null;      // URL absoluta lista para el loader
+  tds: string | null;
+  validated?: boolean;     // true si pasó por el manifest (parseo verificado)
+  dims_mm?: Dims3d | null;
+}
+
+export async function getModel3dInfo(model: string): Promise<Model3dInfo> {
+  const none: Model3dInfo = { available: false, glb: null, fbx: null, tds: null };
+  try {
+    const r = await fetch(`${API}/models3d/${encodeURIComponent(model)}`);
+    if (!r.ok) return none;
+    const j = await r.json();
+    if (!j.available) return none;
+    return {
+      available: true,
+      glb: j.glb ? `${API}${j.glb}` : null,
+      fbx: j.fbx ? `${API}${j.fbx}` : null,
+      tds: j.tds ? `${API}${j.tds}` : null,
+      validated: !!j.validated,
+      dims_mm: j.dims_mm ?? null,
+    };
+  } catch {
+    return none;
+  }
 }
 
 // ---- Búsqueda por imagen (endpoint DINOv2 vía backend) ----

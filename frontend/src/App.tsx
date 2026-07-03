@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type FormEvent } from "react";
+import { useState, useEffect, useRef, lazy, Suspense, type FormEvent } from "react";
 import "./styles.css";
 import Facets from "./Facets";
 import Chat, { type ChatMsg } from "./Chat";
@@ -11,16 +11,20 @@ import Design from "./Design";
 import Compare from "./Compare";
 import {
   search, suggest, getProduct, getHealth, streamChat, EMPTY_SELECTED, searchByImage,
+  getModel3dInfo,
   type ProductSummary, type ProductDetail, type Suggestion, type Filter, type AppliedTag,
   type Selected, type Facets as FacetsData, type ModelCard, type ShopItem,
   type ImageSearchGroup,
   type ImageSearchContext,
   type SortKey,
   type SelectedProduct,
+  type Model3dInfo,
 } from "./api";
 import { ImageDropPanel, CameraIcon, type Photo } from "./ImageSearch";
 import { downscalePhoto } from "./imageUtils";
 import { useSpeech, MicIcon } from "./speech";
+// El visor AR arrastra three.js (~600 KB): se carga solo al abrirlo
+const ArViewer = lazy(() => import("./ArViewer"));
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: "websort", label: "Recomendados" },
@@ -108,6 +112,16 @@ function SearchIcon({ small = false }: { small?: boolean }) {
   );
 }
 
+// Cubo AR del botón "Visualizar en tu habitación" (ficha)
+function CubeArIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3.2 19 7v7.6l-7 3.8-7-3.8V7l7-3.8z" />
+      <path d="M5 7l7 3.8L19 7M12 10.8v7.6" />
+    </svg>
+  );
+}
+
 function SparkIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -134,6 +148,10 @@ export default function App() {
   const [total, setTotal] = useState<number | null>(null);
   const [facets, setFacets] = useState<FacetsData | null>(null);
   const [detail, setDetail] = useState<ProductDetail | null>(null);
+  // Realidad Aumentada: disponibilidad del modelo 3D (CAD del blob, por `model`
+  // de catálogo) para la ficha abierta, y visor abierto/cerrado
+  const [arOpen, setArOpen] = useState(false);
+  const [detailModel3d, setDetailModel3d] = useState<Model3dInfo | null>(null);
   // último producto abierto: NO se borra al cerrar la ficha; es el "producto seleccionado"
   // que el chat usa para resolver "el manual de este producto" sin pedir el SKU.
   const [lastProduct, setLastProduct] = useState<SelectedProduct | null>(null);
@@ -655,6 +673,20 @@ export default function App() {
     sel.categories.length + sel.collections.length + sel.finishes.length +
     rangeOn(sel.price) + rangeOn(sel.length) + rangeOn(sel.width) + rangeOn(sel.height);
 
+  // al abrir una ficha, pregunta al backend si su `model` tiene CAD 3D en el blob;
+  // el botón "Visualizar en tu habitación" solo aparece si lo hay
+  const detailModelId = detail?.model ?? null;
+  useEffect(() => {
+    setDetailModel3d(null);
+    setArOpen(false);
+    if (!detailModelId) return;
+    let stale = false;
+    getModel3dInfo(detailModelId).then((info) => {
+      if (!stale && info.available) setDetailModel3d(info);
+    });
+    return () => { stale = true; };
+  }, [detailModelId]);
+
   return (
     <>
       <div className={`rs-app${aiOpen ? " rs-app--chat" : ""}`}>
@@ -1056,6 +1088,12 @@ export default function App() {
                   <SparkIcon />
                   Preguntar a la IA sobre este artículo
                 </button>
+                {detailModel3d && (
+                  <button type="button" className="rs-cta rs-cta--ar" onClick={() => setArOpen(true)}>
+                    <CubeArIcon />
+                    Visualizar en tu habitación
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1078,6 +1116,18 @@ export default function App() {
             })}
           </div>
         </div>
+      )}
+
+      {/* Realidad Aumentada: cámara + modelo 3D del producto a escala real */}
+      {arOpen && detail && detailModel3d && (
+        <Suspense fallback={null}>
+          <ArViewer
+            info={detailModel3d}
+            title={detail.title}
+            category={detail.category}
+            onClose={() => setArOpen(false)}
+          />
+        </Suspense>
       )}
     </>
   );

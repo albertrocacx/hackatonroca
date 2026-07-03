@@ -50,6 +50,7 @@ backend/data/*
 !backend/data/suppliers.json
 !backend/data/websort.json
 !backend/data/concept_vectors.npy
+!backend/data/models3d_manifest.json
 
 # Ficheros de prueba locales (no se suben al repo)
 testfiles/

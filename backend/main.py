@@ -16,9 +16,11 @@ import numpy as np
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
+from urllib.parse import quote
+
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 # chat IA opcional: si el SDK no está instalado, la app sigue funcionando (solo búsqueda).
 # Guardamos la causa REAL del fallo (no siempre es "falta anthropic": puede ser una versión
@@ -49,6 +51,13 @@ try:
     import design
 except Exception:  # noqa: BLE001
     design = None
+
+# Modelos 3D para Realidad Aumentada (blob products/products_3d). Opcional: sin
+# el SDK de storage o sin connection string, la app funciona sin el botón AR.
+try:
+    import models3d
+except Exception:  # noqa: BLE001
+    models3d = None
 
 # nº de vecinos a pedir a Azure. Alto para que las facetas tengan suficiente material
 # (las facetas se calculan sobre el conjunto devuelto). Configurable por entorno.
@@ -1123,6 +1132,89 @@ def product_detail(sku: str):
         "variants": [variant_summary(v) for v in BY_MODEL.get(p.get("model"), [])],
         "relations": grouped,
     }
+
+# ------------------------------------------------- modelos 3D (Realidad Aumentada)
+# La ficha pregunta por el `model` del producto; si hay CAD en el blob se devuelven
+# las rutas del proxy (contenedor privado) y las medidas reales del catálogo para
+# que el visor ponga el mueble a escala real (los CAD vienen en unidades/ejes
+# arbitrarios: pulgadas y Z-up en la mayoría de .3ds).
+
+def _dims_mm_for_model(model: str | None):
+    for p in BY_MODEL.get(model or "", []):
+        d = p.get("dims") or {}
+        vals = {}
+        for k in ("length_mm", "width_mm", "height_mm"):
+            try:
+                vals[k[:-3]] = float(d.get(k)) if d.get(k) else None
+            except (TypeError, ValueError):
+                vals[k[:-3]] = None
+        if any(vals.values()):
+            return vals
+    return None
+
+
+@app.get("/models3d/{model}")
+def models3d_info(model: str):
+    if models3d is None:
+        return {"available": False}
+    e = models3d.entry(model)
+    if not e or not (e.get("glb") or e.get("fbx") or e.get("tds")):
+        return {"available": False}
+    base = f"/models3d/{quote(model, safe='')}/file/"
+    return {
+        "available": True,
+        "glb": base + quote(e["glb"], safe="") if e.get("glb") else None,
+        "fbx": base + quote(e["fbx"], safe="") if e.get("fbx") else None,
+        "tds": base + quote(e["tds"], safe="") if e.get("tds") else None,
+        "validated": e.get("validated", False),
+        "dims_mm": _dims_mm_for_model(model),
+    }
+
+
+@app.get("/models3d/{model}/file/{name}")
+def models3d_file(model: str, name: str):
+    if models3d is None:
+        raise HTTPException(503, "Modelos 3D no configurados")
+    data = models3d.get_bytes(model, name)
+    if data is None:
+        raise HTTPException(404, f"Modelo 3D {model}/{name} no encontrado")
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+# USDZ para AR Quick Look (iOS): el visor exporta el modelo en el navegador y
+# lo sube aquí; Quick Look lo abre desde una URL real .usdz (con blob: URLs el
+# modo AR sale deshabilitado en varias versiones de iOS).
+@app.post("/models3d/{model}/usdz")
+async def models3d_put_usdz(model: str, request: Request):
+    if models3d is None:
+        raise HTTPException(503, "Modelos 3D no configurados")
+    data = await request.body()
+    if not data:
+        raise HTTPException(400, "Cuerpo vacío")
+    if len(data) > 100_000_000:
+        raise HTTPException(413, "USDZ demasiado grande")
+    key = models3d.put_usdz(model, data)
+    return {"url": f"/models3d/{quote(model, safe='')}/usdz/{key}.usdz"}
+
+
+@app.get("/models3d/{model}/usdz/{name}")
+def models3d_get_usdz(model: str, name: str):
+    if models3d is None:
+        raise HTTPException(503, "Modelos 3D no configurados")
+    key = name[:-5] if name.lower().endswith(".usdz") else name
+    data = models3d.get_usdz(key)
+    if data is None:
+        raise HTTPException(404, "USDZ no disponible (expira a la hora; reabre el visor)")
+    return Response(
+        content=data,
+        media_type="model/vnd.usdz+zip",
+        headers={"Cache-Control": "no-store"},
+    )
+
 
 # ---------------------------------------------------------------- compra offline
 import math
